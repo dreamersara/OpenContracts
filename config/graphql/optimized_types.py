@@ -8,20 +8,20 @@ These types provide efficient data loading through:
 4. Query optimization
 """
 
-import graphene
-from graphene import relay
-from graphene_django import DjangoObjectType
-from graphql_relay import from_global_id, to_global_id
-from typing import List, Optional, Dict, Any
-from django.db import connection
-from django.conf import settings
-from django.db.models import Q
 import logging
+from typing import Optional
+
+import graphene
+from django.conf import settings
+from django.db import connection
+from django.db.models import Q
+from graphql_relay import from_global_id, to_global_id
 
 from opencontractserver.utils.cache_manager import cache_manager
 from opencontractserver.utils.query_optimizer import QueryOptimizer
 
 logger = logging.getLogger(__name__)
+
 
 class AnnotationManifestType(graphene.ObjectType):
     """
@@ -41,40 +41,41 @@ class AnnotationManifestType(graphene.ObjectType):
     structural_count = graphene.Int(description="Structural annotations (layout)")
     corpus_count = graphene.Int(description="Corpus-specific annotations")
     user_annotation_count = graphene.Int(description="User-created annotations")
-    analysis_annotation_count = graphene.Int(description="Analysis-generated annotations")
+    analysis_annotation_count = graphene.Int(
+        description="Analysis-generated annotations"
+    )
 
     # Page information
     total_pages = graphene.Int(description="Total pages with annotations")
     pages_with_annotations = graphene.List(
-        graphene.Int,
-        description="List of page numbers that have annotations"
+        graphene.Int, description="List of page numbers that have annotations"
     )
 
     # Detailed breakdowns
     page_summaries = graphene.List(
-        lambda: PageSummaryType,
-        description="Per-page annotation summary"
+        lambda: PageSummaryType, description="Per-page annotation summary"
     )
     label_summaries = graphene.List(
-        lambda: LabelSummaryType,
-        description="Label usage statistics"
+        lambda: LabelSummaryType, description="Label usage statistics"
     )
 
     # Navigation index (minimal data for jumping)
     navigation_index = graphene.List(
         lambda: NavigationEntryType,
-        description="Lightweight index for jump-to-annotation - contains ALL annotation positions"
+        description="Lightweight index for jump-to-annotation - contains ALL annotation positions",
     )
 
     # Metadata
     cached = graphene.Boolean(description="Whether this data was served from cache")
     generated_at = graphene.DateTime(description="When this manifest was generated")
 
+
 class PageSummaryType(graphene.ObjectType):
     """
     Summary statistics for a single page.
     Used in annotation manifest for page-level navigation.
     """
+
     page = graphene.Int(required=True)
     annotation_count = graphene.Int()
     structural_count = graphene.Int()
@@ -85,17 +86,20 @@ class PageSummaryType(graphene.ObjectType):
     has_user_annotations = graphene.Boolean()
     has_analysis_annotations = graphene.Boolean()
 
+
 class LabelSummaryType(graphene.ObjectType):
     """
     Label usage statistics.
     Shows how many times each label is used and where.
     """
+
     label_id = graphene.ID(required=True)
     label_text = graphene.String()
     label_color = graphene.String()
     usage_count = graphene.Int()
     page_numbers = graphene.List(graphene.Int)
     document_count = graphene.Int(description="Number of documents using this label")
+
 
 class NavigationEntryType(graphene.ObjectType):
     """
@@ -110,32 +114,37 @@ class NavigationEntryType(graphene.ObjectType):
 
     This enables jumping to any annotation with just the manifest loaded.
     """
+
     annotation_id = graphene.ID(required=True)
     page = graphene.Int(required=True)
     label_text = graphene.String()
     text_preview = graphene.String(description="First 50 chars of annotation text")
     bounding_box = graphene.JSONString(description="Position on page for scrolling")
 
+
 class PageAnnotationsType(graphene.ObjectType):
     """
     Annotations for a specific page.
     Used for batch loading multiple pages.
     """
+
     page = graphene.Int(required=True)
-    annotations = graphene.List('config.graphql.graphene_types.AnnotationType')
+    annotations = graphene.List("config.graphql.graphene_types.AnnotationType")
     count = graphene.Int()
+
 
 def create_annotation_manifest_resolver():
     """
     Factory function to create manifest resolver.
     This is added to DocumentType as annotation_manifest field.
     """
+
     def resolve_annotation_manifest(
         self,
         info,
         corpus_id: str,
         analysis_id: Optional[str] = None,
-        use_cache: bool = True
+        use_cache: bool = True,
     ):
         """
         Resolve annotation manifest using materialized views and caching.
@@ -158,25 +167,23 @@ def create_annotation_manifest_resolver():
         _, analysis_pk = from_global_id(analysis_id) if analysis_id else (None, None)
 
         # Log query for monitoring
-        logger.info(f"Resolving manifest for doc={self.id}, corpus={corpus_pk}, analysis={analysis_pk}")
+        logger.info(
+            f"Resolving manifest for doc={self.id}, corpus={corpus_pk}, analysis={analysis_pk}"
+        )
 
         # Try cache first
         if use_cache:
             cached_data = cache_manager.get_annotation_manifest(
-                self.id,
-                corpus_pk,
-                analysis_pk
+                self.id, corpus_pk, analysis_pk
             )
             if cached_data:
-                return AnnotationManifestType(
-                    **cached_data,
-                    cached=True
-                )
+                return AnnotationManifestType(**cached_data, cached=True)
 
         # Use materialized view
         with connection.cursor() as cursor:
             # Get main statistics
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT
                     total_annotations,
                     structural_count,
@@ -189,21 +196,21 @@ def create_annotation_manifest_resolver():
                     last_updated
                 FROM document_annotation_summary
                 WHERE document_id = %s AND corpus_id = %s
-            """, [self.id, corpus_pk])
+            """,
+                [self.id, corpus_pk],
+            )
 
             result = cursor.fetchone()
 
             if not result:
                 # Return empty manifest
                 return AnnotationManifestType(
-                    total_count=0,
-                    structural_count=0,
-                    corpus_count=0,
-                    cached=False
+                    total_count=0, structural_count=0, corpus_count=0, cached=False
                 )
 
             # Get label statistics
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT
                     al.id,
                     al.text,
@@ -215,7 +222,9 @@ def create_annotation_manifest_resolver():
                 WHERE lus.corpus_id = %s
                 ORDER BY lus.usage_count DESC
                 LIMIT 50
-            """, [corpus_pk])
+            """,
+                [corpus_pk],
+            )
 
             label_stats = cursor.fetchall()
 
@@ -223,17 +232,24 @@ def create_annotation_manifest_resolver():
             page_details = result[7] or {}
             page_summaries = []
             for page_str, details in page_details.items():
-                page_summaries.append(PageSummaryType(
-                    page=int(page_str),
-                    annotation_count=details.get('count', 0),
-                    structural_count=details.get('structural', 0),
-                    corpus_count=details.get('count', 0) - details.get('structural', 0),
-                    label_ids=[to_global_id('LabelType', lid) for lid in details.get('labels', [])]
-                ))
+                page_summaries.append(
+                    PageSummaryType(
+                        page=int(page_str),
+                        annotation_count=details.get("count", 0),
+                        structural_count=details.get("structural", 0),
+                        corpus_count=details.get("count", 0)
+                        - details.get("structural", 0),
+                        label_ids=[
+                            to_global_id("LabelType", lid)
+                            for lid in details.get("labels", [])
+                        ],
+                    )
+                )
 
             # Build navigation index for jump-to-annotation
             # This is CRITICAL - without this, users can't jump to specific annotations
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT
                     a.id,
                     a.page,
@@ -245,28 +261,34 @@ def create_annotation_manifest_resolver():
                 WHERE a.document_id = %s AND a.corpus_id = %s
                 ORDER BY a.page, a.id
                 LIMIT 10000  -- Reasonable limit for navigation
-            """, [self.id, corpus_pk])
+            """,
+                [self.id, corpus_pk],
+            )
 
             navigation_entries = []
             for row in cursor.fetchall():
-                navigation_entries.append(NavigationEntryType(
-                    annotation_id=to_global_id('AnnotationType', row[0]),
-                    page=row[1],
-                    label_text=row[2] or '',
-                    text_preview=row[3] or '',
-                    bounding_box=row[4]
-                ))
+                navigation_entries.append(
+                    NavigationEntryType(
+                        annotation_id=to_global_id("AnnotationType", row[0]),
+                        page=row[1],
+                        label_text=row[2] or "",
+                        text_preview=row[3] or "",
+                        bounding_box=row[4],
+                    )
+                )
 
             # Build label summaries
             label_summaries = []
             for row in label_stats:
-                label_summaries.append(LabelSummaryType(
-                    label_id=to_global_id('LabelType', row[0]),
-                    label_text=row[1],
-                    label_color=row[2],
-                    usage_count=row[3],
-                    document_count=row[4]
-                ))
+                label_summaries.append(
+                    LabelSummaryType(
+                        label_id=to_global_id("LabelType", row[0]),
+                        label_text=row[1],
+                        label_color=row[2],
+                        usage_count=row[3],
+                        document_count=row[4],
+                    )
+                )
 
             manifest = AnnotationManifestType(
                 total_count=result[0],
@@ -280,40 +302,39 @@ def create_annotation_manifest_resolver():
                 label_summaries=label_summaries,
                 navigation_index=navigation_entries,  # CRITICAL for jump-to-annotation
                 cached=False,
-                generated_at=result[8]
+                generated_at=result[8],
             )
 
             # Cache for next time
             if use_cache:
                 cache_data = {
-                    'total_count': manifest.total_count,
-                    'structural_count': manifest.structural_count,
-                    'corpus_count': manifest.corpus_count,
-                    'user_annotation_count': manifest.user_annotation_count,
-                    'analysis_annotation_count': manifest.analysis_annotation_count,
-                    'total_pages': manifest.total_pages,
-                    'pages_with_annotations': manifest.pages_with_annotations
+                    "total_count": manifest.total_count,
+                    "structural_count": manifest.structural_count,
+                    "corpus_count": manifest.corpus_count,
+                    "user_annotation_count": manifest.user_annotation_count,
+                    "analysis_annotation_count": manifest.analysis_annotation_count,
+                    "total_pages": manifest.total_pages,
+                    "pages_with_annotations": manifest.pages_with_annotations,
                 }
                 cache_manager.get_or_set(
                     cache_manager.cache_key(
-                        "manifest",
-                        doc=self.id,
-                        corpus=corpus_pk,
-                        analysis=analysis_pk
+                        "manifest", doc=self.id, corpus=corpus_pk, analysis=analysis_pk
                     ),
                     lambda: cache_data,
-                    ttl=300
+                    ttl=300,
                 )
 
             return manifest
 
     return resolve_annotation_manifest
 
+
 def create_page_annotations_resolver():
     """
     Factory function to create page-specific annotation resolver.
     This is added to DocumentType as page_annotations field.
     """
+
     def resolve_page_annotations(
         self,
         info,
@@ -321,7 +342,7 @@ def create_page_annotations_resolver():
         corpus_id: Optional[str] = None,
         analysis_id: Optional[str] = None,
         include_feedback: bool = False,
-        **kwargs
+        **kwargs,
     ):
         """
         Resolve annotations for a specific page.
@@ -347,10 +368,7 @@ def create_page_annotations_resolver():
         analysis_pk = from_global_id(analysis_id)[1] if analysis_id else None
 
         # Build queryset
-        qs = Annotation.objects.filter(
-            document_id=self.id,
-            page=page
-        )
+        qs = Annotation.objects.filter(document_id=self.id, page=page)
 
         # Apply corpus filter
         if corpus_pk:
@@ -365,13 +383,13 @@ def create_page_annotations_resolver():
 
         # Optimize queryset
         qs = QueryOptimizer.optimize_annotation_queryset(
-            qs,
-            include_feedback=include_feedback
+            qs, include_feedback=include_feedback
         )
 
         # Log performance metrics
         if settings.DEBUG:
             from django.db import connection
+
             initial_queries = len(connection.queries)
             result = list(qs)
             query_count = len(connection.queries) - initial_queries
@@ -385,16 +403,15 @@ def create_page_annotations_resolver():
 
     return resolve_page_annotations
 
+
 def create_batch_page_resolver():
     """
     Factory function to create batch page loader.
     This is added to DocumentType as batch_page_annotations field.
     """
+
     def resolve_batch_page_annotations(
-        self,
-        info,
-        pages: List[int],
-        corpus_id: Optional[str] = None
+        self, info, pages: list[int], corpus_id: Optional[str] = None
     ):
         """
         Load multiple pages in a single efficient query.
@@ -412,19 +429,17 @@ def create_batch_page_resolver():
 
         # Use optimizer to batch load
         annotations_by_page = QueryOptimizer.batch_load_annotations_by_page(
-            self.id,
-            pages,
-            corpus_pk
+            self.id, pages, corpus_pk
         )
 
         # Build response
         result = []
         for page, annotations in annotations_by_page.items():
-            result.append(PageAnnotationsType(
-                page=page,
-                annotations=annotations,
-                count=len(annotations)
-            ))
+            result.append(
+                PageAnnotationsType(
+                    page=page, annotations=annotations, count=len(annotations)
+                )
+            )
 
         return result
 

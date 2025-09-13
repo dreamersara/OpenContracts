@@ -1,5 +1,5 @@
 from django.apps import AppConfig
-from django.db.models.signals import post_save, post_delete
+from django.db.models.signals import post_delete, post_save
 from django.utils.translation import gettext_lazy as _
 
 
@@ -14,8 +14,8 @@ class AnnotationsConfig(AppConfig):
             from opencontractserver.annotations.models import Annotation, Note
             from opencontractserver.annotations.signals import (
                 ANNOT_CREATE_UID,
-                NOTE_CREATE_UID,
                 ANNOT_REFRESH_VIEW_UID,
+                NOTE_CREATE_UID,
                 process_annot_on_create_atomic,
                 process_note_on_create_atomic,
                 trigger_view_refresh,

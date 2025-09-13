@@ -14,6 +14,15 @@ from graphql_relay import from_global_id, to_global_id
 
 from config.graphql.base import CountableConnection
 from config.graphql.filters import AnnotationFilter, LabelFilter
+
+# Import optimized types and utilities
+from config.graphql.optimized_types import (
+    AnnotationManifestType,
+    PageAnnotationsType,
+    create_annotation_manifest_resolver,
+    create_batch_page_resolver,
+    create_page_annotations_resolver,
+)
 from config.graphql.permissioning.permission_annotator.mixins import (
     AnnotatePermissionsForReadMixin,
 )
@@ -47,15 +56,6 @@ from opencontractserver.pipeline.base.file_types import (
 from opencontractserver.pipeline.utils import get_components_by_mimetype
 from opencontractserver.shared.resolvers import resolve_oc_model_queryset
 from opencontractserver.users.models import Assignment, UserExport, UserImport
-
-# Import optimized types and utilities
-from config.graphql.optimized_types import (
-    AnnotationManifestType,
-    PageAnnotationsType,
-    create_annotation_manifest_resolver,
-    create_page_annotations_resolver,
-    create_batch_page_resolver
-)
 from opencontractserver.utils.query_optimizer import QueryOptimizer
 
 User = get_user_model()
@@ -651,13 +651,13 @@ class DocumentType(AnnotatePermissionsForReadMixin, DjangoObjectType):
 
             # NEW: Apply optimization before returning
             annotations = QueryOptimizer.optimize_annotation_queryset(
-                annotations,
-                include_feedback=True  # For backward compatibility
+                annotations, include_feedback=True  # For backward compatibility
             )
 
             # Log performance in debug mode
             if settings.DEBUG:
                 from django.db import connection
+
                 initial_queries = len(connection.queries)
                 result = annotations.distinct()
                 query_count = len(connection.queries) - initial_queries
@@ -756,10 +756,9 @@ class DocumentType(AnnotatePermissionsForReadMixin, DjangoObjectType):
         corpus_id=graphene.ID(required=True, description="Corpus ID"),
         analysis_id=graphene.ID(description="Analysis ID (optional)"),
         use_cache=graphene.Boolean(
-            default_value=True,
-            description="Whether to use cache (default: true)"
+            default_value=True, description="Whether to use cache (default: true)"
         ),
-        description="Lightweight manifest for navigation without loading all annotations"
+        description="Lightweight manifest for navigation without loading all annotations",
     )
 
     # Page-specific annotations (optimized)
@@ -768,22 +767,19 @@ class DocumentType(AnnotatePermissionsForReadMixin, DjangoObjectType):
         page=graphene.Int(required=True, description="Page number"),
         analysis_id=graphene.ID(description="Analysis ID"),
         include_feedback=graphene.Boolean(
-            default_value=False,
-            description="Include user feedback (adds queries)"
+            default_value=False, description="Include user feedback (adds queries)"
         ),
-        description="Optimized page-specific annotation loading"
+        description="Optimized page-specific annotation loading",
     )
 
     # Batch page loading
     batch_page_annotations = graphene.Field(
         graphene.List(PageAnnotationsType),
         pages=graphene.List(
-            graphene.Int,
-            required=True,
-            description="List of page numbers"
+            graphene.Int, required=True, description="List of page numbers"
         ),
         corpus_id=graphene.ID(description="Corpus ID"),
-        description="Load multiple pages in a single query"
+        description="Load multiple pages in a single query",
     )
 
     # Add resolvers

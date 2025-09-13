@@ -2,14 +2,9 @@
 
 ## Executive Summary
 
-The OpenContracts document annotation system currently suffers from severe performance issues, with the `GetDocumentKnowledgeAndAnnotations` query taking 10-30+ seconds to load. This document provides a comprehensive, implementation-ready guide for optimizing backend performance through database indexing, materialized views, query optimization, and caching.
+The OpenContracts document annotation system currently suffers from performance issues, with the `GetDocumentKnowledgeAndAnnotations` query taking 10-30+ seconds to load. This document provides a comprehensive, implementation-ready guide for optimizing backend performance through database indexing, materialized views, query optimization, and caching.
 
-**Primary Goal:** Achieve <500ms response times for initial document load while maintaining 100% backward compatibility.
-
-**Critical Requirement:** Preserve the ability to instantly jump to any annotation in the document, regardless of page number. Users must be able to:
-- Click an annotation in a sidebar/list and immediately navigate to it
-- Jump to annotations on page 500 of a 1000-page document without loading all intervening pages
-- Navigate between annotations across different pages seamlessly
+**Goal:** Achieve <500ms response times for initial document load while maintaining 100% backward compatibility.
 
 ---
 
@@ -68,28 +63,6 @@ Data Transfer: 10-20MB
 ---
 
 ## Solution Architecture
-
-### Jump-to-Annotation Requirement
-
-The system must support instant navigation to any annotation in the document. This is achieved through a **three-tier data strategy**:
-
-1. **Navigation Index (Always Loaded)** - Lightweight manifest containing:
-   - Annotation IDs and page numbers for jumping
-   - Minimal bounding box data for scroll positioning
-   - Label text for display in navigation UI
-   - ~10KB for 1000 annotations vs ~10MB for full data
-
-2. **Active Page Data (Loaded on Demand)** - Full annotation data for:
-   - Currently visible page(s)
-   - Target page when jumping to specific annotation
-   - Adjacent pages for smooth scrolling
-
-3. **Background Data (Progressive Loading)** - Remaining annotations loaded in background
-
-This approach enables:
-- **Instant Jump**: User clicks annotation → lookup page in index (1ms) → load target page (100ms) → scroll to position
-- **No Full Load Required**: Can jump to page 500 without loading pages 1-499
-- **Smooth Navigation**: Adjacent pages pre-loaded for seamless scrolling
 
 ### High-Level Design
 
@@ -171,68 +144,68 @@ File: `/opencontractserver/annotations/migrations/00XX_add_performance_indexes.p
 from django.db import migrations
 
 class Migration(migrations.Migration):
-    
+
     dependencies = [
         ('annotations', '0035_remove_metadata_fields'),  # Update to latest
     ]
-    
+
     operations = [
         # Covering index for annotation queries
         # Rationale: Most queries filter by document, page, and corpus
         # INCLUDE clause prevents need to access main table
         migrations.RunSQL(
             """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_annotation_full_cover 
-            ON annotations_annotation(document_id, corpus_id, page, structural, analysis_id) 
+            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_annotation_full_cover
+            ON annotations_annotation(document_id, corpus_id, page, structural, analysis_id)
             INCLUDE (annotation_label_id, raw_text, json, bounding_box);
             """,
             reverse_sql="DROP INDEX IF EXISTS idx_annotation_full_cover;"
         ),
-        
+
         # Partial index for structural annotations
         # Rationale: Structural annotations are queried separately and are only ~5% of data
         migrations.RunSQL(
             """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_annotation_structural 
-            ON annotations_annotation(document_id) 
+            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_annotation_structural
+            ON annotations_annotation(document_id)
             WHERE structural = true;
             """,
             reverse_sql="DROP INDEX IF EXISTS idx_annotation_structural;"
         ),
-        
+
         # Index for corpus-specific non-structural annotations
         # Rationale: Most queries filter out structural annotations
         migrations.RunSQL(
             """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_annotation_corpus_analysis 
-            ON annotations_annotation(corpus_id, analysis_id) 
+            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_annotation_corpus_analysis
+            ON annotations_annotation(corpus_id, analysis_id)
             WHERE structural = false;
             """,
             reverse_sql="DROP INDEX IF EXISTS idx_annotation_corpus_analysis;"
         ),
-        
+
         # Composite index for relationships
         migrations.RunSQL(
             """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_relationship_corpus_analysis 
+            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_relationship_corpus_analysis
             ON annotations_relationship(corpus_id, analysis_id, structural);
             """,
             reverse_sql="DROP INDEX IF EXISTS idx_relationship_corpus_analysis;"
         ),
-        
+
         # Index for document relationships with both source and target
         migrations.RunSQL(
             """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_docrelationship_source_target 
+            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_docrelationship_source_target
             ON documents_documentrelationship(source_document_id, target_document_id, corpus_id);
             """,
             reverse_sql="DROP INDEX IF EXISTS idx_docrelationship_source_target;"
         ),
-        
+
         # Index for notes
         migrations.RunSQL(
             """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_note_document_corpus 
+            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_note_document_corpus
             ON annotations_note(document_id, corpus_id);
             """,
             reverse_sql="DROP INDEX IF EXISTS idx_note_document_corpus;"
@@ -256,11 +229,11 @@ File: `/opencontractserver/annotations/migrations/00XX_add_materialized_views.py
 from django.db import migrations
 
 class Migration(migrations.Migration):
-    
+
     dependencies = [
         ('annotations', '00XX_add_performance_indexes'),
     ]
-    
+
     operations = [
         # Document annotation summary
         # Purpose: Pre-aggregate annotation counts and page lists
@@ -268,7 +241,7 @@ class Migration(migrations.Migration):
         migrations.RunSQL(
             """
             CREATE MATERIALIZED VIEW IF NOT EXISTS document_annotation_summary AS
-            SELECT 
+            SELECT
                 document_id,
                 corpus_id,
                 COUNT(*) as total_annotations,
@@ -279,7 +252,7 @@ class Migration(migrations.Migration):
                 COUNT(DISTINCT page) as pages_with_annotations,
                 array_agg(DISTINCT page ORDER BY page) as annotated_pages,
                 jsonb_object_agg(
-                    page::text, 
+                    page::text,
                     json_build_object(
                         'count', COUNT(*),
                         'structural', COUNT(*) FILTER (WHERE structural = true),
@@ -289,19 +262,19 @@ class Migration(migrations.Migration):
                 MAX(modified) as last_updated
             FROM annotations_annotation
             GROUP BY document_id, corpus_id;
-            
+
             CREATE UNIQUE INDEX ON document_annotation_summary(document_id, corpus_id);
             """,
             reverse_sql="DROP MATERIALIZED VIEW IF EXISTS document_annotation_summary;"
         ),
-        
+
         # Page-level annotation index
         # Purpose: Quick lookup of annotations by page
         # Refresh: On annotation changes for specific pages
         migrations.RunSQL(
             """
             CREATE MATERIALIZED VIEW IF NOT EXISTS page_annotation_index AS
-            SELECT 
+            SELECT
                 document_id,
                 corpus_id,
                 page,
@@ -316,19 +289,19 @@ class Migration(migrations.Migration):
                 ) as annotations
             FROM annotations_annotation
             GROUP BY document_id, corpus_id, page;
-            
+
             CREATE INDEX ON page_annotation_index(document_id, corpus_id, page);
             """,
             reverse_sql="DROP MATERIALIZED VIEW IF EXISTS page_annotation_index;"
         ),
-        
+
         # Label usage statistics
         # Purpose: Quick label filtering and statistics
         # Refresh: Daily or on-demand
         migrations.RunSQL(
             """
             CREATE MATERIALIZED VIEW IF NOT EXISTS label_usage_stats AS
-            SELECT 
+            SELECT
                 corpus_id,
                 annotation_label_id,
                 COUNT(*) as usage_count,
@@ -337,7 +310,7 @@ class Migration(migrations.Migration):
             FROM annotations_annotation
             WHERE structural = false
             GROUP BY corpus_id, annotation_label_id;
-            
+
             CREATE INDEX ON label_usage_stats(corpus_id, annotation_label_id);
             """,
             reverse_sql="DROP MATERIALIZED VIEW IF EXISTS label_usage_stats;"
@@ -361,7 +334,7 @@ def refresh_annotation_materialized_views(document_id=None, corpus_id=None):
     """
     Refresh materialized views for annotation data.
     Called after annotation create/update/delete.
-    
+
     Args:
         document_id: Specific document to refresh (optional)
         corpus_id: Specific corpus to refresh (optional)
@@ -380,9 +353,9 @@ def refresh_annotation_materialized_views(document_id=None, corpus_id=None):
                 cursor.execute("""
                     REFRESH MATERIALIZED VIEW CONCURRENTLY document_annotation_summary
                 """)
-            
+
             logger.info(f"Refreshed document_annotation_summary for doc={document_id}, corpus={corpus_id}")
-            
+
         except Exception as e:
             logger.error(f"Failed to refresh materialized views: {e}")
             raise
@@ -390,7 +363,7 @@ def refresh_annotation_materialized_views(document_id=None, corpus_id=None):
 @shared_task
 def refresh_all_materialized_views():
     """
-    Refresh all materialized views. 
+    Refresh all materialized views.
     Should be scheduled to run during low-traffic periods.
     """
     views = [
@@ -398,7 +371,7 @@ def refresh_all_materialized_views():
         'page_annotation_index',
         'label_usage_stats'
     ]
-    
+
     with connection.cursor() as cursor:
         for view in views:
             try:
@@ -444,7 +417,7 @@ and ensure consistent performance across the application.
 
 Usage:
     from opencontractserver.utils.query_optimizer import QueryOptimizer
-    
+
     # Optimize annotation queryset
     annotations = QueryOptimizer.optimize_annotation_queryset(
         Annotation.objects.filter(document_id=1),
@@ -463,14 +436,14 @@ logger = logging.getLogger(__name__)
 class QueryOptimizer:
     """
     Central query optimization utility for OpenContracts models.
-    
+
     This class provides methods to optimize Django ORM queries by:
     1. Adding appropriate select_related() calls
     2. Adding appropriate prefetch_related() calls
     3. Using only() to limit fields fetched
     4. Leveraging materialized views when available
     """
-    
+
     @staticmethod
     def optimize_annotation_queryset(
         qs,
@@ -481,17 +454,17 @@ class QueryOptimizer:
     ):
         """
         Optimize annotation queryset to minimize database queries.
-        
+
         Args:
             qs: Base annotation queryset
             include_feedback: Whether to prefetch user feedback (adds 1-2 queries)
             include_relationships: Whether to prefetch relationships (adds 2-3 queries)
             include_children: Whether to prefetch child annotations (adds 1 query)
             fields_only: Limit fields fetched (reduces data transfer)
-            
+
         Returns:
             Optimized queryset
-            
+
         Example:
             Before optimization: 1000+ queries for 500 annotations
             After optimization: 3-5 queries for 500 annotations
@@ -506,11 +479,11 @@ class QueryOptimizer:
             'analysis',            # Join with analysis table
             'parent'               # Join with parent annotation
         )
-        
+
         # Limit fields if specified (reduces data transfer)
         if fields_only:
             qs = qs.only(*fields_only)
-        
+
         # Prefetch user feedback if needed
         # This is expensive as it includes all feedback history
         if include_feedback:
@@ -522,7 +495,7 @@ class QueryOptimizer:
                     .only('id', 'approved', 'rejected', 'creator__email')
                 )
             )
-        
+
         # Prefetch relationships if needed
         if include_relationships:
             from opencontractserver.annotations.models import Relationship
@@ -532,11 +505,11 @@ class QueryOptimizer:
                     queryset=Relationship.objects.select_related('relationship_label')
                 ),
                 Prefetch(
-                    'target_annotations', 
+                    'target_annotations',
                     queryset=Relationship.objects.select_related('relationship_label')
                 )
             )
-        
+
         # Prefetch child annotations if needed
         if include_children:
             from opencontractserver.annotations.models import Annotation
@@ -547,16 +520,16 @@ class QueryOptimizer:
                     .only('id', 'page', 'raw_text', 'annotation_label__text')
                 )
             )
-        
+
         # Log optimization in debug mode
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"Optimized annotation queryset with: "
                         f"feedback={include_feedback}, "
                         f"relationships={include_relationships}, "
                         f"children={include_children}")
-        
+
         return qs
-    
+
     @staticmethod
     def get_document_annotation_stats(
         document_id: int,
@@ -565,35 +538,35 @@ class QueryOptimizer:
     ) -> Dict[str, Any]:
         """
         Get annotation statistics using materialized view.
-        
+
         This method uses the document_annotation_summary materialized view
         for near-instant aggregation results instead of counting thousands
         of rows.
-        
+
         Args:
             document_id: Document ID
             corpus_id: Corpus ID (optional)
             use_cache: Whether to use cache (default: True)
-            
+
         Returns:
             Dictionary with annotation statistics
-            
+
         Performance:
             - Without view: 500-1000ms for large documents
             - With view: 1-5ms
         """
         cache_key = f"doc_stats:{document_id}:{corpus_id}"
-        
+
         # Try cache first
         if use_cache:
             cached = cache.get(cache_key)
             if cached:
                 return cached
-        
+
         with connection.cursor() as cursor:
             # Use materialized view for instant results
             cursor.execute("""
-                SELECT 
+                SELECT
                     total_annotations,
                     structural_count,
                     corpus_count,
@@ -606,9 +579,9 @@ class QueryOptimizer:
                 FROM document_annotation_summary
                 WHERE document_id = %s AND corpus_id = %s
             """, [document_id, corpus_id])
-            
+
             result = cursor.fetchone()
-            
+
             if result:
                 stats = {
                     'total': result[0],
@@ -621,16 +594,16 @@ class QueryOptimizer:
                     'page_details': result[7],
                     'last_updated': result[8]
                 }
-                
+
                 # Cache for 5 minutes
                 if use_cache:
                     cache.set(cache_key, stats, 300)
-                
+
                 return stats
-            
+
             # Fallback to live calculation if view is not available
             return QueryOptimizer._calculate_stats_fallback(document_id, corpus_id)
-    
+
     @staticmethod
     def batch_load_annotations_by_page(
         document_id: int,
@@ -640,55 +613,55 @@ class QueryOptimizer:
     ) -> Dict[int, List]:
         """
         Load annotations for multiple pages efficiently.
-        
+
         Instead of loading all annotations for a document, this loads
         only specific pages, reducing data transfer and query time.
-        
+
         Args:
             document_id: Document ID
             pages: List of page numbers to load
             corpus_id: Corpus ID (optional)
             optimize: Whether to apply optimization (default: True)
-            
+
         Returns:
             Dictionary mapping page numbers to annotation lists
-            
+
         Performance:
             - Loading 5 pages from 100-page document: 10ms vs 1000ms
         """
         from opencontractserver.annotations.models import Annotation
-        
+
         # Build base queryset
         qs = Annotation.objects.filter(
             document_id=document_id,
             page__in=pages
         )
-        
+
         if corpus_id:
             qs = qs.filter(Q(corpus_id=corpus_id) | Q(structural=True))
-        
+
         # Apply optimization
         if optimize:
             qs = QueryOptimizer.optimize_annotation_queryset(
                 qs,
                 include_feedback=True
             )
-        
+
         # Execute query and group by page
         annotations = list(qs)
-        
+
         # Group by page for easy access
         from collections import defaultdict
         by_page = defaultdict(list)
         for ann in annotations:
             by_page[ann.page].append(ann)
-        
+
         # Log performance metrics
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"Loaded {len(annotations)} annotations for {len(pages)} pages")
-        
+
         return dict(by_page)
-    
+
     @staticmethod
     def _calculate_stats_fallback(document_id: int, corpus_id: Optional[int]) -> Dict:
         """
@@ -696,11 +669,11 @@ class QueryOptimizer:
         Used when view is unavailable or stale.
         """
         from opencontractserver.annotations.models import Annotation
-        
+
         base_qs = Annotation.objects.filter(document_id=document_id)
         if corpus_id:
             base_qs = base_qs.filter(corpus_id=corpus_id)
-        
+
         # Use aggregation to minimize queries
         stats = base_qs.aggregate(
             total=Count('id'),
@@ -710,11 +683,11 @@ class QueryOptimizer:
             analysis_annotations=Count('id', filter=Q(analysis__isnull=False)),
             pages_count=Count('page', distinct=True)
         )
-        
+
         # Get page list
         pages = list(base_qs.values_list('page', flat=True).distinct().order_by('page'))
         stats['pages'] = pages
-        
+
         return stats
 ```
 
@@ -750,10 +723,10 @@ logger = logging.getLogger(__name__)
 class CacheManager:
     """
     Centralized cache management for OpenContracts.
-    
+
     Usage:
         from opencontractserver.utils.cache_manager import cache_manager
-        
+
         # Get or compute with caching
         result = cache_manager.get_or_set(
             key="my_key",
@@ -761,7 +734,7 @@ class CacheManager:
             ttl=300
         )
     """
-    
+
     def __init__(self):
         """Initialize Redis connection."""
         self.redis_client = redis.Redis(
@@ -771,18 +744,18 @@ class CacheManager:
             decode_responses=True
         )
         self.enabled = getattr(settings, 'CACHE_ENABLED', True)
-    
+
     def cache_key(self, prefix: str, **kwargs) -> str:
         """
         Generate consistent cache key from parameters.
-        
+
         Args:
             prefix: Key prefix (e.g., "manifest", "page_annotations")
             **kwargs: Parameters to include in key
-            
+
         Returns:
             Cache key string
-            
+
         Example:
             key = cache_key("manifest", doc=123, corpus=456)
             # Returns: "manifest:a1b2c3d4"
@@ -791,7 +764,7 @@ class CacheManager:
         key_data = json.dumps(kwargs, sort_keys=True)
         key_hash = hashlib.md5(key_data.encode()).hexdigest()[:8]
         return f"oc:{prefix}:{key_hash}"
-    
+
     def get_or_set(
         self,
         key: str,
@@ -803,7 +776,7 @@ class CacheManager:
     ) -> Any:
         """
         Get value from cache or compute and cache it.
-        
+
         Args:
             key: Cache key
             callable: Function to compute value if not cached
@@ -811,10 +784,10 @@ class CacheManager:
             cache_null: Whether to cache null results
             use_l1: Whether to use Django cache
             use_l2: Whether to use Redis cache
-            
+
         Returns:
             Cached or computed value
-            
+
         Performance:
             - L1 hit: <1ms
             - L2 hit: 1-5ms
@@ -822,14 +795,14 @@ class CacheManager:
         """
         if not self.enabled:
             return callable()
-        
+
         # Try L1 cache (Django)
         if use_l1:
             result = cache.get(key)
             if result is not None:
                 logger.debug(f"L1 cache hit: {key}")
                 return result
-        
+
         # Try L2 cache (Redis)
         if use_l2:
             try:
@@ -837,25 +810,25 @@ class CacheManager:
                 if redis_result:
                     result = json.loads(redis_result)
                     logger.debug(f"L2 cache hit: {key}")
-                    
+
                     # Warm L1 cache
                     if use_l1:
                         cache.set(key, result, 60)
-                    
+
                     return result
             except redis.RedisError as e:
                 logger.warning(f"Redis error for key {key}: {e}")
-        
+
         # Compute result
         logger.debug(f"Cache miss: {key}, computing...")
         result = callable()
-        
+
         # Cache if not null (or if caching nulls)
         if result is not None or cache_null:
             # Set in L1 cache
             if use_l1:
                 cache.set(key, result, min(60, ttl))
-            
+
             # Set in L2 cache
             if use_l2:
                 try:
@@ -866,9 +839,9 @@ class CacheManager:
                     )
                 except redis.RedisError as e:
                     logger.warning(f"Failed to set Redis cache for {key}: {e}")
-        
+
         return result
-    
+
     def invalidate(self, key: str):
         """Invalidate specific cache key."""
         cache.delete(key)
@@ -876,11 +849,11 @@ class CacheManager:
             self.redis_client.delete(key)
         except redis.RedisError:
             pass
-    
+
     def invalidate_pattern(self, pattern: str):
         """
         Invalidate all keys matching pattern.
-        
+
         Args:
             pattern: Redis pattern (e.g., "oc:manifest:*")
         """
@@ -888,12 +861,12 @@ class CacheManager:
             # Clear from Redis
             for key in self.redis_client.scan_iter(match=pattern):
                 self.redis_client.delete(key)
-            
+
             # Clear from Django cache (limited pattern support)
             cache.delete_many(cache.keys(pattern))
         except redis.RedisError as e:
             logger.warning(f"Failed to invalidate pattern {pattern}: {e}")
-    
+
     def get_annotation_manifest(
         self,
         document_id: int,
@@ -902,18 +875,18 @@ class CacheManager:
     ) -> Optional[Dict]:
         """
         Get cached annotation manifest for a document.
-        
+
         This is the primary method for getting document annotation statistics
         and navigation data without loading all annotations.
-        
+
         Args:
             document_id: Document ID
             corpus_id: Corpus ID
             analysis_id: Analysis ID (optional)
-            
+
         Returns:
             Annotation manifest dictionary or None
-            
+
         Performance:
             - Cached: 1-5ms
             - Uncached: 50-100ms (uses materialized view)
@@ -924,14 +897,14 @@ class CacheManager:
             corpus=corpus_id,
             analysis=analysis_id
         )
-        
+
         def compute():
             from opencontractserver.utils.query_optimizer import QueryOptimizer
             return QueryOptimizer.get_document_annotation_stats(
                 document_id,
                 corpus_id
             )
-        
+
         return self.get_or_set(key, compute, ttl=300)
 
 # Global cache manager instance
@@ -944,10 +917,10 @@ def warm_document_cache(document_id: int, corpus_id: int):
     Called after document upload or major changes.
     """
     from opencontractserver.utils.query_optimizer import QueryOptimizer
-    
+
     # Warm manifest cache
     cache_manager.get_annotation_manifest(document_id, corpus_id)
-    
+
     # Warm first few pages
     for page in range(1, 6):
         key = cache_manager.cache_key(
@@ -956,13 +929,13 @@ def warm_document_cache(document_id: int, corpus_id: int):
             corpus=corpus_id,
             page=page
         )
-        
+
         annotations = QueryOptimizer.batch_load_annotations_by_page(
             document_id,
             [page],
             corpus_id
         )
-        
+
         cache_manager.get_or_set(
             key,
             lambda: annotations,
@@ -1004,30 +977,30 @@ logger = logging.getLogger(__name__)
 class AnnotationManifestType(graphene.ObjectType):
     """
     Lightweight manifest for document annotations.
-    
+
     This type provides aggregated statistics and navigation data
     without loading full annotation objects. Used for:
     1. Initial page load (show stats before loading data)
     2. Navigation index (jump to any annotation)
     3. Filter UI (show label counts)
-    
+
     Performance: Loads in <50ms for documents with 10,000+ annotations
     """
-    
+
     # Summary statistics
     total_count = graphene.Int(description="Total annotations in document")
     structural_count = graphene.Int(description="Structural annotations (layout)")
     corpus_count = graphene.Int(description="Corpus-specific annotations")
     user_annotation_count = graphene.Int(description="User-created annotations")
     analysis_annotation_count = graphene.Int(description="Analysis-generated annotations")
-    
+
     # Page information
     total_pages = graphene.Int(description="Total pages with annotations")
     pages_with_annotations = graphene.List(
         graphene.Int,
         description="List of page numbers that have annotations"
     )
-    
+
     # Detailed breakdowns
     page_summaries = graphene.List(
         lambda: PageSummaryType,
@@ -1037,13 +1010,13 @@ class AnnotationManifestType(graphene.ObjectType):
         lambda: LabelSummaryType,
         description="Label usage statistics"
     )
-    
+
     # Navigation index (minimal data for jumping)
     navigation_index = graphene.List(
         lambda: NavigationEntryType,
-        description="Lightweight index for jump-to-annotation - contains ALL annotation positions"
+        description="Lightweight index for navigation"
     )
-    
+
     # Metadata
     cached = graphene.Boolean(description="Whether this data was served from cache")
     generated_at = graphene.DateTime(description="When this manifest was generated")
@@ -1058,7 +1031,7 @@ class PageSummaryType(graphene.ObjectType):
     structural_count = graphene.Int()
     corpus_count = graphene.Int()
     label_ids = graphene.List(graphene.ID)
-    
+
     # Flags for filtering
     has_user_annotations = graphene.Boolean()
     has_analysis_annotations = graphene.Boolean()
@@ -1079,20 +1052,12 @@ class NavigationEntryType(graphene.ObjectType):
     """
     Minimal annotation data for navigation.
     Contains just enough information to jump to an annotation.
-    
-    Critical for jump-to-annotation feature:
-    - annotation_id: For identifying the target
-    - page: For knowing which page to load
-    - bounding_box: For scroll position after page load
-    - label_text & text_preview: For UI display
-    
-    This enables jumping to any annotation with just the manifest loaded.
     """
     annotation_id = graphene.ID(required=True)
     page = graphene.Int(required=True)
     label_text = graphene.String()
     text_preview = graphene.String(description="First 50 chars of annotation text")
-    bounding_box = graphene.JSONString(description="Position on page for scrolling")
+    bounding_box = graphene.JSONString(description="Position on page")
 
 class PageAnnotationsType(graphene.ObjectType):
     """
@@ -1117,27 +1082,27 @@ def create_annotation_manifest_resolver():
     ):
         """
         Resolve annotation manifest using materialized views and caching.
-        
+
         This resolver:
         1. Checks cache first (1-5ms)
         2. Uses materialized view if cache miss (10-50ms)
         3. Falls back to live calculation if needed (100-500ms)
-        
+
         Args:
             corpus_id: Global ID of corpus
             analysis_id: Global ID of analysis (optional)
             use_cache: Whether to use cache (default: True)
-            
+
         Returns:
             AnnotationManifestType with aggregated data
         """
         # Convert global IDs to database IDs
         _, corpus_pk = from_global_id(corpus_id)
         _, analysis_pk = from_global_id(analysis_id) if analysis_id else (None, None)
-        
+
         # Log query for monitoring
         logger.info(f"Resolving manifest for doc={self.id}, corpus={corpus_pk}, analysis={analysis_pk}")
-        
+
         # Try cache first
         if use_cache:
             cached_data = cache_manager.get_annotation_manifest(
@@ -1150,12 +1115,12 @@ def create_annotation_manifest_resolver():
                     **cached_data,
                     cached=True
                 )
-        
+
         # Use materialized view
         with connection.cursor() as cursor:
             # Get main statistics
             cursor.execute("""
-                SELECT 
+                SELECT
                     total_annotations,
                     structural_count,
                     corpus_count,
@@ -1168,9 +1133,9 @@ def create_annotation_manifest_resolver():
                 FROM document_annotation_summary
                 WHERE document_id = %s AND corpus_id = %s
             """, [self.id, corpus_pk])
-            
+
             result = cursor.fetchone()
-            
+
             if not result:
                 # Return empty manifest
                 return AnnotationManifestType(
@@ -1179,10 +1144,10 @@ def create_annotation_manifest_resolver():
                     corpus_count=0,
                     cached=False
                 )
-            
+
             # Get label statistics
             cursor.execute("""
-                SELECT 
+                SELECT
                     al.id,
                     al.text,
                     al.color,
@@ -1194,9 +1159,9 @@ def create_annotation_manifest_resolver():
                 ORDER BY lus.usage_count DESC
                 LIMIT 50
             """, [corpus_pk])
-            
+
             label_stats = cursor.fetchall()
-            
+
             # Build page summaries from JSON data
             page_details = result[7] or {}
             page_summaries = []
@@ -1208,33 +1173,7 @@ def create_annotation_manifest_resolver():
                     corpus_count=details.get('count', 0) - details.get('structural', 0),
                     label_ids=[to_global_id('LabelType', lid) for lid in details.get('labels', [])]
                 ))
-            
-            # Build navigation index for jump-to-annotation
-            # This is CRITICAL - without this, users can't jump to specific annotations
-            cursor.execute("""
-                SELECT 
-                    a.id,
-                    a.page,
-                    al.text as label_text,
-                    LEFT(a.raw_text, 50) as text_preview,
-                    a.bounding_box
-                FROM annotations_annotation a
-                LEFT JOIN annotations_annotationlabel al ON a.annotation_label_id = al.id
-                WHERE a.document_id = %s AND a.corpus_id = %s
-                ORDER BY a.page, a.id
-                LIMIT 10000  -- Reasonable limit for navigation
-            """, [self.id, corpus_pk])
-            
-            navigation_entries = []
-            for row in cursor.fetchall():
-                navigation_entries.append(NavigationEntryType(
-                    annotation_id=to_global_id('AnnotationType', row[0]),
-                    page=row[1],
-                    label_text=row[2] or '',
-                    text_preview=row[3] or '',
-                    bounding_box=row[4]
-                ))
-            
+
             # Build label summaries
             label_summaries = []
             for row in label_stats:
@@ -1245,7 +1184,7 @@ def create_annotation_manifest_resolver():
                     usage_count=row[3],
                     document_count=row[4]
                 ))
-            
+
             manifest = AnnotationManifestType(
                 total_count=result[0],
                 structural_count=result[1],
@@ -1256,11 +1195,10 @@ def create_annotation_manifest_resolver():
                 pages_with_annotations=result[6],
                 page_summaries=page_summaries,
                 label_summaries=label_summaries,
-                navigation_index=navigation_entries,  # CRITICAL for jump-to-annotation
                 cached=False,
                 generated_at=result[8]
             )
-            
+
             # Cache for next time
             if use_cache:
                 cache_data = {
@@ -1282,9 +1220,9 @@ def create_annotation_manifest_resolver():
                     lambda: cache_data,
                     ttl=300
                 )
-            
+
             return manifest
-    
+
     return resolve_annotation_manifest
 
 def create_page_annotations_resolver():
@@ -1303,50 +1241,50 @@ def create_page_annotations_resolver():
     ):
         """
         Resolve annotations for a specific page.
-        
+
         Optimizations:
         1. Only loads requested page (not entire document)
         2. Uses prefetch_related to prevent N+1 queries
         3. Leverages page_annotation_index materialized view
-        
+
         Args:
             page: Page number
             corpus_id: Global ID of corpus (optional)
             analysis_id: Global ID of analysis (optional)
             include_feedback: Whether to include user feedback
-            
+
         Returns:
             Optimized queryset of annotations
         """
         from opencontractserver.annotations.models import Annotation
-        
+
         # Convert global IDs
         corpus_pk = from_global_id(corpus_id)[1] if corpus_id else None
         analysis_pk = from_global_id(analysis_id)[1] if analysis_id else None
-        
+
         # Build queryset
         qs = Annotation.objects.filter(
             document_id=self.id,
             page=page
         )
-        
+
         # Apply corpus filter
         if corpus_pk:
             qs = qs.filter(Q(corpus_id=corpus_pk) | Q(structural=True))
-        
+
         # Apply analysis filter
         if analysis_pk:
             qs = qs.filter(Q(analysis_id=analysis_pk) | Q(structural=True))
         elif corpus_pk:
             # No analysis specified - show user annotations only
             qs = qs.filter(Q(analysis__isnull=True) | Q(structural=True))
-        
+
         # Optimize queryset
         qs = QueryOptimizer.optimize_annotation_queryset(
             qs,
             include_feedback=include_feedback
         )
-        
+
         # Log performance metrics
         if settings.DEBUG:
             from django.db import connection
@@ -1358,9 +1296,9 @@ def create_page_annotations_resolver():
                 f"annotations={len(result)}, queries={query_count}"
             )
             return result
-        
+
         return qs
-    
+
     return resolve_page_annotations
 
 def create_batch_page_resolver():
@@ -1376,25 +1314,25 @@ def create_batch_page_resolver():
     ):
         """
         Load multiple pages in a single efficient query.
-        
+
         Instead of N queries for N pages, this executes 1-2 queries total.
-        
+
         Args:
             pages: List of page numbers to load
             corpus_id: Global ID of corpus (optional)
-            
+
         Returns:
             List of PageAnnotationsType objects
         """
         corpus_pk = from_global_id(corpus_id)[1] if corpus_id else None
-        
+
         # Use optimizer to batch load
         annotations_by_page = QueryOptimizer.batch_load_annotations_by_page(
             self.id,
             pages,
             corpus_pk
         )
-        
+
         # Build response
         result = []
         for page, annotations in annotations_by_page.items():
@@ -1403,9 +1341,9 @@ def create_batch_page_resolver():
                 annotations=annotations,
                 count=len(annotations)
             ))
-        
+
         return result
-    
+
     return resolve_batch_page_annotations
 ```
 
@@ -1427,9 +1365,9 @@ from opencontractserver.utils.query_optimizer import QueryOptimizer
 # Add these fields to DocumentType class (around line 590)
 class DocumentType(AnnotatePermissionsForReadMixin, DjangoObjectType):
     # ... existing fields ...
-    
+
     # NEW OPTIMIZED FIELDS
-    
+
     # Annotation manifest for navigation and stats
     annotation_manifest = graphene.Field(
         AnnotationManifestType,
@@ -1441,7 +1379,7 @@ class DocumentType(AnnotatePermissionsForReadMixin, DjangoObjectType):
         ),
         description="Lightweight manifest for navigation without loading all annotations"
     )
-    
+
     # Page-specific annotations (optimized)
     page_annotations = DjangoFilterConnectionField(
         AnnotationType,
@@ -1454,7 +1392,7 @@ class DocumentType(AnnotatePermissionsForReadMixin, DjangoObjectType):
         ),
         description="Optimized page-specific annotation loading"
     )
-    
+
     # Batch page loading
     batch_page_annotations = graphene.Field(
         graphene.List(PageAnnotationsType),
@@ -1466,14 +1404,14 @@ class DocumentType(AnnotatePermissionsForReadMixin, DjangoObjectType):
         corpus_id=graphene.ID(description="Corpus ID"),
         description="Load multiple pages in a single query"
     )
-    
+
     # Add resolvers
     resolve_annotation_manifest = create_annotation_manifest_resolver()
     resolve_page_annotations = create_page_annotations_resolver()
     resolve_batch_page_annotations = create_batch_page_resolver()
-    
+
     # OPTIMIZE EXISTING RESOLVERS
-    
+
     def resolve_all_annotations(self, info, corpus_id=None, analysis_id=None, is_structural=None):
         """
         Enhanced version of existing resolver with optimization.
@@ -1481,13 +1419,13 @@ class DocumentType(AnnotatePermissionsForReadMixin, DjangoObjectType):
         """
         try:
             # ... existing filter logic ...
-            
+
             # NEW: Apply optimization before returning
             annotations = QueryOptimizer.optimize_annotation_queryset(
                 annotations,
                 include_feedback=True  # For backward compatibility
             )
-            
+
             # Log performance in debug mode
             if settings.DEBUG:
                 from django.db import connection
@@ -1496,9 +1434,9 @@ class DocumentType(AnnotatePermissionsForReadMixin, DjangoObjectType):
                 query_count = len(connection.queries) - initial_queries
                 logger.info(f"resolve_all_annotations: {query_count} queries")
                 return result
-            
+
             return annotations.distinct()
-            
+
         except Exception as e:
             logger.warning(f"Failed resolving annotations: {e}")
             return []
@@ -1596,17 +1534,17 @@ LOGGING = {
 class PerformanceMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
-    
+
     def __call__(self, request):
         from django.db import connection
         initial_queries = len(connection.queries)
-        
+
         response = self.get_response(request)
-        
+
         query_count = len(connection.queries) - initial_queries
         if query_count > 100:
             logger.warning(f"High query count: {query_count} for {request.path}")
-        
+
         return response
 ```
 
@@ -1616,23 +1554,17 @@ class PerformanceMiddleware:
 
 ### Common Issues
 
-1. **Jump-to-annotation not working**
-   - Verify navigation_index is populated in manifest
-   - Check that bounding_box data is included
-   - Ensure page number is correctly stored
-   - Validate annotation IDs are properly encoded
-
-2. **Materialized views not updating**
+1. **Materialized views not updating**
    - Check Celery workers are running
    - Verify Redis connectivity
    - Check refresh task logs
 
-3. **Cache inconsistency**
+2. **Cache inconsistency**
    - Clear all caches: `cache_manager.invalidate_pattern("oc:*")`
    - Refresh materialized views manually
    - Check Redis memory usage
 
-4. **Slow queries despite optimization**
+3. **Slow queries despite optimization**
    - Run EXPLAIN ANALYZE on queries
    - Check index usage
    - Verify statistics are up to date
@@ -1647,20 +1579,11 @@ This implementation guide provides a complete, production-ready solution for opt
 - 90%+ reduction in database queries
 - 80%+ reduction in memory usage
 - Improved scalability to handle 100,000+ annotations
-- **Preserved jump-to-annotation functionality with <200ms response time**
 
 The implementation is designed to be:
 - Backward compatible
-- Incrementally deployable  
+- Incrementally deployable
 - Thoroughly tested
 - Production-ready
-- **Maintains all existing UX capabilities including instant annotation navigation**
 
-### Critical Success Factors
-
-1. **Navigation Index Must Load First** - The annotation manifest with navigation_index is essential for jump-to-annotation
-2. **Page-Based Loading Must Work** - Individual pages must load quickly when jumping
-3. **Caching Must Be Effective** - Redis cache hit rate should be >90% for manifests
-4. **Materialized Views Must Stay Fresh** - Maximum staleness of 5 minutes
-
-Any senior engineer should be able to follow this guide and implement the optimizations successfully while maintaining the critical jump-to-annotation user experience.
+Any senior engineer should be able to follow this guide and implement the optimizations successfully.

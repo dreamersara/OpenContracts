@@ -9,16 +9,17 @@ Implements multi-tier caching strategy:
 This significantly reduces database load and improves response times.
 """
 
-import redis
-import json
 import hashlib
+import json
 import logging
-from typing import Any, Optional, Callable, Dict
+from typing import Any, Callable, Optional
+
+import redis
 from django.conf import settings
 from django.core.cache import cache
-from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+
 
 class CacheManager:
     """
@@ -38,12 +39,12 @@ class CacheManager:
     def __init__(self):
         """Initialize Redis connection."""
         self.redis_client = redis.Redis(
-            host=getattr(settings, 'REDIS_HOST', 'localhost'),
-            port=getattr(settings, 'REDIS_PORT', 6379),
-            db=getattr(settings, 'REDIS_DB', 0),
-            decode_responses=True
+            host=getattr(settings, "REDIS_HOST", "localhost"),
+            port=getattr(settings, "REDIS_PORT", 6379),
+            db=getattr(settings, "REDIS_DB", 0),
+            decode_responses=True,
         )
-        self.enabled = getattr(settings, 'CACHE_ENABLED', True)
+        self.enabled = getattr(settings, "CACHE_ENABLED", True)
 
     def cache_key(self, prefix: str, **kwargs) -> str:
         """
@@ -72,7 +73,7 @@ class CacheManager:
         ttl: int = 300,
         cache_null: bool = False,
         use_l1: bool = True,
-        use_l2: bool = True
+        use_l2: bool = True,
     ) -> Any:
         """
         Get value from cache or compute and cache it.
@@ -132,11 +133,7 @@ class CacheManager:
             # Set in L2 cache
             if use_l2:
                 try:
-                    self.redis_client.setex(
-                        key,
-                        ttl,
-                        json.dumps(result, default=str)
-                    )
+                    self.redis_client.setex(key, ttl, json.dumps(result, default=str))
                 except redis.RedisError as e:
                     logger.warning(f"Failed to set Redis cache for {key}: {e}")
 
@@ -168,11 +165,8 @@ class CacheManager:
             logger.warning(f"Failed to invalidate pattern {pattern}: {e}")
 
     def get_annotation_manifest(
-        self,
-        document_id: int,
-        corpus_id: int,
-        analysis_id: Optional[int] = None
-    ) -> Optional[Dict]:
+        self, document_id: int, corpus_id: int, analysis_id: Optional[int] = None
+    ) -> Optional[dict]:
         """
         Get cached annotation manifest for a document.
 
@@ -192,23 +186,20 @@ class CacheManager:
             - Uncached: 50-100ms (uses materialized view)
         """
         key = self.cache_key(
-            "manifest",
-            doc=document_id,
-            corpus=corpus_id,
-            analysis=analysis_id
+            "manifest", doc=document_id, corpus=corpus_id, analysis=analysis_id
         )
 
         def compute():
             from opencontractserver.utils.query_optimizer import QueryOptimizer
-            return QueryOptimizer.get_document_annotation_stats(
-                document_id,
-                corpus_id
-            )
+
+            return QueryOptimizer.get_document_annotation_stats(document_id, corpus_id)
 
         return self.get_or_set(key, compute, ttl=300)
 
+
 # Global cache manager instance
 cache_manager = CacheManager()
+
 
 # Cache warming utilities
 def warm_document_cache(document_id: int, corpus_id: int):
@@ -224,20 +215,11 @@ def warm_document_cache(document_id: int, corpus_id: int):
     # Warm first few pages
     for page in range(1, 6):
         key = cache_manager.cache_key(
-            "page_annotations",
-            doc=document_id,
-            corpus=corpus_id,
-            page=page
+            "page_annotations", doc=document_id, corpus=corpus_id, page=page
         )
 
         annotations = QueryOptimizer.batch_load_annotations_by_page(
-            document_id,
-            [page],
-            corpus_id
+            document_id, [page], corpus_id
         )
 
-        cache_manager.get_or_set(
-            key,
-            lambda: annotations,
-            ttl=600
-        )
+        cache_manager.get_or_set(key, lambda: annotations, ttl=600)

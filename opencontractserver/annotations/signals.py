@@ -3,8 +3,6 @@ import logging
 from django.apps import apps
 from django.conf import settings
 from django.db import transaction
-from django.db.models.signals import post_save, post_delete
-from django.dispatch import receiver
 
 from opencontractserver.tasks.embeddings_task import (
     calculate_embedding_for_annotation_text,
@@ -129,11 +127,10 @@ def trigger_view_refresh(sender, instance, **kwargs):
     from .tasks import refresh_annotation_materialized_views
 
     # Queue async refresh only if document and corpus are set
-    if hasattr(instance, 'document_id') and hasattr(instance, 'corpus_id'):
+    if hasattr(instance, "document_id") and hasattr(instance, "corpus_id"):
         if instance.document_id and instance.corpus_id:
             transaction.on_commit(
                 lambda: refresh_annotation_materialized_views.delay(
-                    document_id=instance.document_id,
-                    corpus_id=instance.corpus_id
+                    document_id=instance.document_id, corpus_id=instance.corpus_id
                 )
             )

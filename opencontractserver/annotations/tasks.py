@@ -1,8 +1,10 @@
-from celery import shared_task
-from django.db import connection
 import logging
 
+from celery import shared_task
+from django.db import connection
+
 logger = logging.getLogger(__name__)
+
 
 @shared_task
 def refresh_annotation_materialized_views(document_id=None, corpus_id=None):
@@ -19,21 +21,29 @@ def refresh_annotation_materialized_views(document_id=None, corpus_id=None):
             # Refresh document summary
             if document_id and corpus_id:
                 # Targeted refresh for specific document/corpus
-                cursor.execute("""
+                cursor.execute(
+                    """
                     REFRESH MATERIALIZED VIEW CONCURRENTLY document_annotation_summary
                     WHERE document_id = %s AND corpus_id = %s
-                """, [document_id, corpus_id])
+                """,
+                    [document_id, corpus_id],
+                )
             else:
                 # Full refresh (expensive, use sparingly)
-                cursor.execute("""
+                cursor.execute(
+                    """
                     REFRESH MATERIALIZED VIEW CONCURRENTLY document_annotation_summary
-                """)
+                """
+                )
 
-            logger.info(f"Refreshed document_annotation_summary for doc={document_id}, corpus={corpus_id}")
+            logger.info(
+                f"Refreshed document_annotation_summary for doc={document_id}, corpus={corpus_id}"
+            )
 
         except Exception as e:
             logger.error(f"Failed to refresh materialized views: {e}")
             raise
+
 
 @shared_task
 def refresh_all_materialized_views():
@@ -42,9 +52,9 @@ def refresh_all_materialized_views():
     Should be scheduled to run during low-traffic periods.
     """
     views = [
-        'document_annotation_summary',
-        'page_annotation_index',
-        'label_usage_stats'
+        "document_annotation_summary",
+        "page_annotation_index",
+        "label_usage_stats",
     ]
 
     with connection.cursor() as cursor:
