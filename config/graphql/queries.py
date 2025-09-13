@@ -837,7 +837,7 @@ class Query(graphene.ObjectType):
     def resolve_documents(self, info, **kwargs):
         return resolve_oc_model_queryset(Document, info.context.user)
 
-    document = graphene.Field(DocumentType, id=graphene.String())
+    document = graphene.Field(DocumentType, id=graphene.ID())
 
     def resolve_document(self, info, **kwargs):
         django_pk = from_global_id(kwargs.get("id", None))[1]

@@ -3,6 +3,8 @@ import logging
 from django.apps import apps
 from django.conf import settings
 from django.db import transaction
+from django.db.models.signals import post_save, post_delete
+from django.dispatch import receiver
 
 from opencontractserver.tasks.embeddings_task import (
     calculate_embedding_for_annotation_text,
@@ -16,6 +18,7 @@ ANNOT_CREATE_UID = (
     "process_annot_on_create_atomic_uid_v1"  # Added _v1 for potential future changes
 )
 NOTE_CREATE_UID = "process_note_on_create_atomic_uid_v1"  # Added _v1
+ANNOT_REFRESH_VIEW_UID = "refresh_materialized_views_uid_v1"
 
 
 def process_annot_on_create_atomic(sender, instance, created, **kwargs):
@@ -113,4 +116,24 @@ def process_structural_annotation_for_corpuses(annotation):
             logger.info(
                 f"Queued embedding calculation for structural annotation {annotation.id} "
                 f"using embedder {embedder_path} from corpus {corpus_id}"
+            )
+
+
+def trigger_view_refresh(sender, instance, **kwargs):
+    """
+    Trigger materialized view refresh when annotations change.
+    Uses Celery to avoid blocking the request.
+
+    Connected via dispatch_uid to avoid duplicate registrations.
+    """
+    from .tasks import refresh_annotation_materialized_views
+
+    # Queue async refresh only if document and corpus are set
+    if hasattr(instance, 'document_id') and hasattr(instance, 'corpus_id'):
+        if instance.document_id and instance.corpus_id:
+            transaction.on_commit(
+                lambda: refresh_annotation_materialized_views.delay(
+                    document_id=instance.document_id,
+                    corpus_id=instance.corpus_id
+                )
             )
