@@ -8,6 +8,10 @@ from opencontractserver.tasks.embeddings_task import (
     calculate_embedding_for_annotation_text,
     calculate_embedding_for_note_text,
 )
+from opencontractserver.tasks.materialized_view_tasks import (
+    refresh_annotation_navigation_mv,
+    refresh_annotation_summary_mv,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +54,29 @@ def process_annot_on_create_atomic(sender, instance, created, **kwargs):
                 f"to ensure it has embeddings for all corpuses"
             )
             process_structural_annotation_for_corpuses(instance)
+
+    # Refresh materialized views when annotations are created or updated
+    if created or kwargs.get("update_fields"):
+        # Queue materialized view refresh after transaction commits
+        transaction.on_commit(
+            lambda: refresh_annotation_summary_mv.delay(
+                document_id=instance.document_id,
+                corpus_id=(
+                    instance.corpus_id if hasattr(instance, "corpus_id") else None
+                ),
+            )
+        )
+
+        # Also refresh navigation view for non-structural annotations
+        if not instance.structural:
+            transaction.on_commit(
+                lambda: refresh_annotation_navigation_mv.delay(
+                    document_id=instance.document_id,
+                    corpus_id=(
+                        instance.corpus_id if hasattr(instance, "corpus_id") else None
+                    ),
+                )
+            )
 
 
 def process_note_on_create_atomic(sender, instance, created, **kwargs):

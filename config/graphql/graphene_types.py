@@ -16,6 +16,10 @@ from config.graphql.filters import AnnotationFilter, LabelFilter
 from config.graphql.permissioning.permission_annotator.mixins import (
     AnnotatePermissionsForReadMixin,
 )
+from config.graphql.progressive_types import (
+    AnnotationNavigationType,
+    AnnotationSummaryType,
+)
 from opencontractserver.analyzer.models import Analysis, Analyzer, GremlinEngine
 from opencontractserver.annotations.models import (
     Annotation,
@@ -304,13 +308,6 @@ class LabelTypeEnum(graphene.Enum):
     DOC_TYPE_LABEL = "DOC_TYPE_LABEL"
     TOKEN_LABEL = "TOKEN_LABEL"
     SPAN_LABEL = "SPAN_LABEL"
-
-
-class AnnotationSummaryType(graphene.ObjectType):
-    id: graphene.String()  # type: ignore
-    label = graphene.String()
-    type = LabelTypeEnum()
-    raw_text = graphene.String()
 
 
 class DocumentRelationshipType(AnnotatePermissionsForReadMixin, DjangoObjectType):
@@ -798,6 +795,69 @@ class DocumentType(AnnotatePermissionsForReadMixin, DjangoObjectType):
             return self.get_summary_for_corpus(corpus)
         except Corpus.DoesNotExist:
             return ""
+
+    # Progressive loading fields for optimized data fetching
+    annotation_summary = graphene.Field(
+        AnnotationSummaryType,
+        corpus_id=graphene.ID(required=True),
+        description="Get annotation statistics from materialized view",
+    )
+
+    def resolve_annotation_summary(self, info, corpus_id):
+        """Resolve annotation summary using materialized view."""
+        _, corpus_pk = from_global_id(corpus_id)
+        return AnnotationSummaryType.resolve_for_document(
+            document_id=self.id, corpus_id=corpus_pk
+        )
+
+    annotation_navigation = graphene.List(
+        AnnotationNavigationType,
+        corpus_id=graphene.ID(required=True),
+        analysis_id=graphene.ID(),
+        description="Get lightweight annotation data for navigation",
+    )
+
+    def resolve_annotation_navigation(self, info, corpus_id, analysis_id=None):
+        """Resolve navigation annotations."""
+        _, corpus_pk = from_global_id(corpus_id)
+        analysis_pk = None
+        if analysis_id:
+            _, analysis_pk = from_global_id(analysis_id)
+
+        return AnnotationNavigationType.resolve_for_document(
+            document_id=self.id, corpus_id=corpus_pk, analysis_id=analysis_pk
+        )
+
+    page_annotations = graphene.List(
+        AnnotationType,
+        corpus_id=graphene.ID(required=True),
+        page=graphene.Int(required=True),
+        structural=graphene.Boolean(),
+        analysis_id=graphene.ID(),
+        description="Get annotations for a specific page using optimized queries",
+    )
+
+    def resolve_page_annotations(
+        self, info, corpus_id, page, structural=None, analysis_id=None
+    ):
+        """Resolve annotations for a specific page using optimized queries."""
+        from opencontractserver.annotations.query_optimizer import (
+            AnnotationQueryOptimizer,
+        )
+
+        _, corpus_pk = from_global_id(corpus_id)
+        analysis_pk = None
+        if analysis_id:
+            _, analysis_pk = from_global_id(analysis_id)
+
+        return AnnotationQueryOptimizer.get_document_annotations(
+            document_id=self.id,
+            corpus_id=corpus_pk,
+            page=page,
+            structural=structural,
+            analysis_id=analysis_pk,
+            use_cache=True,
+        )
 
     class Meta:
         model = Document

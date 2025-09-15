@@ -12,6 +12,12 @@ from .import_tasks import (
     process_documents_zip,
 )
 from .lookup_tasks import build_label_lookups_task
+from .materialized_view_tasks import (
+    check_materialized_view_staleness,
+    refresh_all_materialized_views,
+    refresh_annotation_navigation_mv,
+    refresh_annotation_summary_mv,
+)
 from .permissioning_tasks import make_analysis_public_task, make_corpus_public_task
 
 # Great, quick guidance on how to restructure tasks into multiple modules:
@@ -32,4 +38,8 @@ __all__ = [
     "make_corpus_public_task",
     "make_analysis_public_task",
     "delete_analysis_and_annotations_task",
+    "refresh_annotation_summary_mv",
+    "refresh_annotation_navigation_mv",
+    "refresh_all_materialized_views",
+    "check_materialized_view_staleness",
 ]
