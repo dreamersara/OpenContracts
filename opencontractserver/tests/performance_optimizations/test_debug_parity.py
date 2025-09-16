@@ -23,8 +23,7 @@ class DebugParityTestCase(BaseFixtureTestCase):
 
         # Create test corpus
         self.corpus = Corpus.objects.create(
-            title="Debug Test Corpus",
-            creator=self.user
+            title="Debug Test Corpus", creator=self.user
         )
 
         # Create analyzer and analysis
@@ -33,19 +32,16 @@ class DebugParityTestCase(BaseFixtureTestCase):
             description="Debug analyzer",
             creator=self.user,
             manifest={},
-            task_name="debug_task"
+            task_name="debug_task",
         )
 
         self.analysis = Analysis.objects.create(
-            analyzer=self.analyzer,
-            analyzed_corpus=self.corpus,
-            creator=self.user
+            analyzer=self.analyzer, analyzed_corpus=self.corpus, creator=self.user
         )
 
         # Create label
         self.label = AnnotationLabel.objects.create(
-            text="Debug Label",
-            creator=self.user
+            text="Debug Label", creator=self.user
         )
 
         # Create simple annotations
@@ -54,11 +50,11 @@ class DebugParityTestCase(BaseFixtureTestCase):
             Annotation.objects.create(
                 document=self.doc,
                 corpus=self.corpus,
-                page=i+1,
+                page=i + 1,
                 annotation_label=self.label,
                 raw_text=f"Structural {i}",
                 structural=True,
-                creator=self.user
+                creator=self.user,
             )
 
         # 3 user annotations (no analysis)
@@ -71,7 +67,7 @@ class DebugParityTestCase(BaseFixtureTestCase):
                 raw_text=f"User ann {i}",
                 structural=False,
                 analysis=None,
-                creator=self.user
+                creator=self.user,
             )
 
         # 2 analysis annotations
@@ -84,7 +80,7 @@ class DebugParityTestCase(BaseFixtureTestCase):
                 raw_text=f"Analysis ann {i}",
                 structural=False,
                 analysis=self.analysis,
-                creator=self.user
+                creator=self.user,
             )
 
         self.client = Client(schema)
@@ -132,9 +128,7 @@ class DebugParityTestCase(BaseFixtureTestCase):
         """
 
         result1 = self.client.execute(
-            query1,
-            variables={"documentId": doc_id},
-            context_value=self.context
+            query1, variables={"documentId": doc_id}, context_value=self.context
         )
 
         if result1.get("errors"):
@@ -161,14 +155,16 @@ class DebugParityTestCase(BaseFixtureTestCase):
         result2 = self.client.execute(
             query2,
             variables={"documentId": doc_id, "corpusId": corpus_id},
-            context_value=self.context
+            context_value=self.context,
         )
 
         if result2.get("errors"):
             print(f"Error in query2: {result2['errors']}")
         else:
             all_anns_no_analysis = result2["data"]["document"]["allAnnotations"]
-            print(f"\nallAnnotations (NO analysis filter) returned: {len(all_anns_no_analysis)}")
+            print(
+                f"\nallAnnotations (NO analysis filter) returned: {len(all_anns_no_analysis)}"
+            )
             for ann in all_anns_no_analysis[:5]:  # Show first 5
                 print(f"  - {ann['rawText']} (structural={ann['structural']})")
 
@@ -190,16 +186,18 @@ class DebugParityTestCase(BaseFixtureTestCase):
             variables={
                 "documentId": doc_id,
                 "corpusId": corpus_id,
-                "analysisId": analysis_id
+                "analysisId": analysis_id,
             },
-            context_value=self.context
+            context_value=self.context,
         )
 
         if result3.get("errors"):
             print(f"Error in query3: {result3['errors']}")
         else:
             all_anns_with_analysis = result3["data"]["document"]["allAnnotations"]
-            print(f"\nallAnnotations (WITH analysis={analysis_id}) returned: {len(all_anns_with_analysis)}")
+            print(
+                f"\nallAnnotations (WITH analysis={analysis_id}) returned: {len(all_anns_with_analysis)}"
+            )
             for ann in all_anns_with_analysis[:5]:  # Show first 5
                 print(f"  - {ann['rawText']} (structural={ann['structural']})")
 
@@ -223,9 +221,9 @@ class DebugParityTestCase(BaseFixtureTestCase):
                 "documentId": doc_id,
                 "corpusId": corpus_id,
                 "page": 1,
-                "analysisId": analysis_id
+                "analysisId": analysis_id,
             },
-            context_value=self.context
+            context_value=self.context,
         )
 
         # Test page 2
@@ -235,9 +233,9 @@ class DebugParityTestCase(BaseFixtureTestCase):
                 "documentId": doc_id,
                 "corpusId": corpus_id,
                 "page": 2,
-                "analysisId": analysis_id
+                "analysisId": analysis_id,
             },
-            context_value=self.context
+            context_value=self.context,
         )
 
         if result4_p1.get("data") and result4_p2.get("data"):
@@ -255,6 +253,12 @@ class DebugParityTestCase(BaseFixtureTestCase):
         print(f"{'='*60}")
         print("\nExpected behavior:")
         print("- allStructuralAnnotations: Should return 2 structural annotations")
-        print("- allAnnotations (no analysis): Should return structural + user annotations = 5")
-        print("- allAnnotations (with analysis): Should return structural + analysis annotations = 4")
-        print("- pageAnnotations: Should return annotations for specific page based on filters")
+        print(
+            "- allAnnotations (no analysis): Should return structural + user annotations = 5"
+        )
+        print(
+            "- allAnnotations (with analysis): Should return structural + analysis annotations = 4"
+        )
+        print(
+            "- pageAnnotations: Should return annotations for specific page based on filters"
+        )

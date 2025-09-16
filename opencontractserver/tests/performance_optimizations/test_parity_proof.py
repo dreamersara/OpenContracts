@@ -4,8 +4,8 @@ Proof test that demonstrates:
 2. Exact data parity - annotation sets are THE SAME
 """
 
+import logging
 import time
-from typing import Dict, List, Set
 
 from django.contrib.auth import get_user_model
 from django.db import connection
@@ -25,6 +25,7 @@ from opencontractserver.corpuses.models import Corpus
 from opencontractserver.documents.models import Document
 from opencontractserver.feedback.models import UserFeedback
 
+logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
@@ -37,9 +38,7 @@ class ParityProofTestCase(TransactionTestCase):
     def setUp(self):
         # Create user
         self.user = User.objects.create_user(
-            username="testuser",
-            email="test@test.com",
-            password="testpass"
+            username="testuser", email="test@test.com", password="testpass"
         )
 
         # Create document
@@ -48,14 +47,12 @@ class ParityProofTestCase(TransactionTestCase):
             description="Document for parity testing",
             creator=self.user,
             file_type="application/pdf",
-            backend_lock=False
+            backend_lock=False,
         )
 
         # Create corpus
         self.corpus = Corpus.objects.create(
-            title="Parity Test Corpus",
-            creator=self.user,
-            backend_lock=False
+            title="Parity Test Corpus", creator=self.user, backend_lock=False
         )
 
         # Create analyzer and analysis
@@ -64,26 +61,20 @@ class ParityProofTestCase(TransactionTestCase):
             description="Parity test analyzer",
             creator=self.user,
             manifest={},
-            task_name="parity_task"
+            task_name="parity_task",
         )
 
         self.analysis = Analysis.objects.create(
-            analyzer=self.analyzer,
-            analyzed_corpus=self.corpus,
-            creator=self.user
+            analyzer=self.analyzer, analyzed_corpus=self.corpus, creator=self.user
         )
 
         # Create labels
         self.label1 = AnnotationLabel.objects.create(
-            text="Label 1",
-            color="blue",
-            creator=self.user
+            text="Label 1", color="blue", creator=self.user
         )
 
         self.label2 = AnnotationLabel.objects.create(
-            text="Label 2",
-            color="red",
-            creator=self.user
+            text="Label 2", color="red", creator=self.user
         )
 
         # Create substantial test data for meaningful performance comparison
@@ -104,49 +95,70 @@ class ParityProofTestCase(TransactionTestCase):
         # Create 100 structural annotations across 20 pages
         for page in range(1, 21):
             for i in range(5):
-                annotations.append(Annotation(
-                    document=self.doc,
-                    corpus=self.corpus,
-                    page=page,
-                    annotation_label=self.label1,
-                    raw_text=f"Structural {page}-{i}",
-                    json={"type": "structural", "page": page, "index": i},
-                    structural=True,
-                    creator=self.user,
-                    bounding_box={"x": i * 20, "y": page * 10, "width": 15, "height": 8}
-                ))
+                annotations.append(
+                    Annotation(
+                        document=self.doc,
+                        corpus=self.corpus,
+                        page=page,
+                        annotation_label=self.label1,
+                        raw_text=f"Structural {page}-{i}",
+                        json={"type": "structural", "page": page, "index": i},
+                        structural=True,
+                        creator=self.user,
+                        bounding_box={
+                            "x": i * 20,
+                            "y": page * 10,
+                            "width": 15,
+                            "height": 8,
+                        },
+                    )
+                )
 
         # Create 200 user annotations across 20 pages
         for page in range(1, 21):
             for i in range(10):
-                annotations.append(Annotation(
-                    document=self.doc,
-                    corpus=self.corpus,
-                    page=page,
-                    annotation_label=self.label2,
-                    raw_text=f"User {page}-{i}",
-                    json={"type": "user", "page": page, "index": i},
-                    structural=False,
-                    analysis=None,
-                    creator=self.user,
-                    bounding_box={"x": i * 30, "y": page * 15, "width": 25, "height": 10}
-                ))
+                annotations.append(
+                    Annotation(
+                        document=self.doc,
+                        corpus=self.corpus,
+                        page=page,
+                        annotation_label=self.label2,
+                        raw_text=f"User {page}-{i}",
+                        json={"type": "user", "page": page, "index": i},
+                        structural=False,
+                        analysis=None,
+                        creator=self.user,
+                        bounding_box={
+                            "x": i * 30,
+                            "y": page * 15,
+                            "width": 25,
+                            "height": 10,
+                        },
+                    )
+                )
 
         # Create 100 analysis annotations across 20 pages
         for page in range(1, 21):
             for i in range(5):
-                annotations.append(Annotation(
-                    document=self.doc,
-                    corpus=self.corpus,
-                    page=page,
-                    annotation_label=self.label1,
-                    raw_text=f"Analysis {page}-{i}",
-                    json={"type": "analysis", "page": page, "index": i},
-                    structural=False,
-                    analysis=self.analysis,
-                    creator=self.user,
-                    bounding_box={"x": i * 40, "y": page * 20, "width": 35, "height": 12}
-                ))
+                annotations.append(
+                    Annotation(
+                        document=self.doc,
+                        corpus=self.corpus,
+                        page=page,
+                        annotation_label=self.label1,
+                        raw_text=f"Analysis {page}-{i}",
+                        json={"type": "analysis", "page": page, "index": i},
+                        structural=False,
+                        analysis=self.analysis,
+                        creator=self.user,
+                        bounding_box={
+                            "x": i * 40,
+                            "y": page * 20,
+                            "width": 35,
+                            "height": 12,
+                        },
+                    )
+                )
 
         # Bulk create all annotations
         Annotation.objects.bulk_create(annotations)
@@ -158,7 +170,7 @@ class ParityProofTestCase(TransactionTestCase):
                 corpus=self.corpus,
                 title=f"Note {i}",
                 content=f"Content for note {i}",
-                creator=self.user
+                creator=self.user,
             )
 
         # Create some feedback on first 10 annotations
@@ -169,21 +181,20 @@ class ParityProofTestCase(TransactionTestCase):
                 approved=(i % 2 == 0),
                 rejected=(i % 2 == 1),
                 comment=f"Feedback {i}",
-                creator=self.user
+                creator=self.user,
             )
 
         # Create a relationship
-        non_structural = Annotation.objects.filter(
-            document=self.doc,
-            structural=False
-        )[:2]
+        non_structural = Annotation.objects.filter(document=self.doc, structural=False)[
+            :2
+        ]
         if non_structural.count() >= 2:
             rel = Relationship.objects.create(
                 corpus=self.corpus,
                 document=self.doc,
                 creator=self.user,
                 relationship_label=self.label1,
-                structural=False
+                structural=False,
             )
             rel.source_annotations.add(non_structural[0])
             rel.target_annotations.add(non_structural[1])
@@ -191,16 +202,18 @@ class ParityProofTestCase(TransactionTestCase):
     def _refresh_materialized_views(self):
         """Refresh materialized views if they exist."""
         with connection.cursor() as cursor:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT matviewname FROM pg_matviews
                 WHERE matviewname IN ('annotation_summary_mv', 'annotation_navigation_mv')
-            """)
+            """
+            )
             existing_views = [row[0] for row in cursor.fetchall()]
 
             for view in existing_views:
                 try:
                     cursor.execute(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {view}")
-                except:
+                except Exception:
                     pass  # Ignore if view doesn't exist
 
     def test_speedup_and_data_parity(self):
@@ -212,9 +225,9 @@ class ParityProofTestCase(TransactionTestCase):
         corpus_id = to_global_id("CorpusType", self.corpus.id)
         analysis_id = to_global_id("AnalysisType", self.analysis.id)
 
-        print(f"\n{'='*70}")
-        print("PARITY PROOF TEST - SPEEDUP AND DATA EQUIVALENCE")
-        print(f"{'='*70}")
+        logger.debug(f"\n{'='*70}")
+        logger.debug("PARITY PROOF TEST - SPEEDUP AND DATA EQUIVALENCE")
+        logger.debug(f"{'='*70}")
 
         # ========== MONOLITHIC QUERY ==========
         monolithic_query = """
@@ -260,15 +273,15 @@ class ParityProofTestCase(TransactionTestCase):
             variables={
                 "documentId": doc_id,
                 "corpusId": corpus_id,
-                "analysisId": analysis_id
+                "analysisId": analysis_id,
             },
-            context_value=self.context
+            context_value=self.context,
         )
         monolithic_time = time.perf_counter() - start_time
 
         self.assertIsNone(
             monolithic_result.get("errors"),
-            f"Monolithic query failed: {monolithic_result.get('errors')}"
+            f"Monolithic query failed: {monolithic_result.get('errors')}",
         )
 
         monolithic_data = monolithic_result["data"]["document"]
@@ -294,7 +307,7 @@ class ParityProofTestCase(TransactionTestCase):
         metadata_result = self.client.execute(
             metadata_query,
             variables={"documentId": doc_id, "corpusId": corpus_id},
-            context_value=self.context
+            context_value=self.context,
         )
         progressive_data.update(metadata_result["data"]["document"])
 
@@ -312,7 +325,7 @@ class ParityProofTestCase(TransactionTestCase):
         self.client.execute(
             summary_query,
             variables={"documentId": doc_id, "corpusId": corpus_id},
-            context_value=self.context
+            context_value=self.context,
         )
 
         # 3. Get structural annotations
@@ -331,9 +344,11 @@ class ParityProofTestCase(TransactionTestCase):
         structural_result = self.client.execute(
             structural_query,
             variables={"documentId": doc_id},
-            context_value=self.context
+            context_value=self.context,
         )
-        progressive_data["allStructuralAnnotations"] = structural_result["data"]["document"]["allStructuralAnnotations"]
+        progressive_data["allStructuralAnnotations"] = structural_result["data"][
+            "document"
+        ]["allStructuralAnnotations"]
 
         # 4. Get first 3 pages of annotations (simulating visible pages)
         first_pages_anns = []
@@ -365,9 +380,9 @@ class ParityProofTestCase(TransactionTestCase):
                     "documentId": doc_id,
                     "corpusId": corpus_id,
                     "page": page,
-                    "analysisId": analysis_id
+                    "analysisId": analysis_id,
                 },
-                context_value=self.context
+                context_value=self.context,
             )
             if page_result.get("data"):
                 first_pages_anns.extend(
@@ -389,30 +404,37 @@ class ParityProofTestCase(TransactionTestCase):
             variables={
                 "documentId": doc_id,
                 "corpusId": corpus_id,
-                "analysisId": analysis_id
+                "analysisId": analysis_id,
             },
-            context_value=self.context
+            context_value=self.context,
         )
-        progressive_data["allRelationships"] = rel_result["data"]["document"]["allRelationships"]
+        progressive_data["allRelationships"] = rel_result["data"]["document"][
+            "allRelationships"
+        ]
 
         progressive_initial_time = time.perf_counter() - start_time
 
         # ========== PROOF 1: SPEEDUP FACTOR ==========
         speedup_factor = monolithic_time / progressive_initial_time
 
-        print(f"\n{'='*70}")
-        print("PROOF 1: SPEEDUP FACTOR")
-        print(f"{'='*70}")
-        print(f"Monolithic query time: {monolithic_time:.4f} seconds")
-        print(f"Progressive initial load: {progressive_initial_time:.4f} seconds")
-        print(f"SPEEDUP FACTOR: {speedup_factor:.2f}x faster")
+        logger.debug(f"\n{'='*70}")
+        logger.debug("PROOF 1: SPEEDUP FACTOR")
+        logger.debug(f"{'='*70}")
+        logger.debug(f"Monolithic query time: {monolithic_time:.4f} seconds")
+        logger.debug(
+            f"Progressive initial load: {progressive_initial_time:.4f} seconds"
+        )
+        logger.debug(f"SPEEDUP FACTOR: {speedup_factor:.2f}x faster")
 
         # ASSERTION 1: Progressive is faster
         self.assertGreater(
-            speedup_factor, 1.0,
-            f"Progressive loading ({progressive_initial_time:.4f}s) should be faster than monolithic ({monolithic_time:.4f}s)"
+            speedup_factor,
+            1.0,
+            f"Progressive loading ({progressive_initial_time:.4f}s) should be faster than monolithic ({monolithic_time:.4f}s)",  # noqa: E501
         )
-        print(f"✅ ASSERTION PASSED: Progressive is {speedup_factor:.2f}x faster")
+        logger.debug(
+            f"✅ ASSERTION PASSED: Progressive is {speedup_factor:.2f}x faster"
+        )
 
         # ========== Now load ALL pages to prove data parity ==========
         # Note: Instead of using pageAnnotations which might filter differently,
@@ -443,16 +465,18 @@ class ParityProofTestCase(TransactionTestCase):
             variables={
                 "documentId": doc_id,
                 "corpusId": corpus_id,
-                "analysisId": analysis_id
+                "analysisId": analysis_id,
             },
-            context_value=self.context
+            context_value=self.context,
         )
-        progressive_data["allAnnotations"] = all_anns_result["data"]["document"]["allAnnotations"]
+        progressive_data["allAnnotations"] = all_anns_result["data"]["document"][
+            "allAnnotations"
+        ]
 
         # ========== PROOF 2: EXACT DATA PARITY ==========
-        print(f"\n{'='*70}")
-        print("PROOF 2: EXACT DATA PARITY")
-        print(f"{'='*70}")
+        logger.debug(f"\n{'='*70}")
+        logger.debug("PROOF 2: EXACT DATA PARITY")
+        logger.debug(f"{'='*70}")
 
         # Extract annotation IDs and create sets for comparison
         monolithic_structural_ids = {
@@ -477,29 +501,29 @@ class ParityProofTestCase(TransactionTestCase):
             ann["id"]: ann for ann in progressive_data.get("allAnnotations", [])
         }
 
-        print(f"\nStructural Annotations:")
-        print(f"  Monolithic: {len(monolithic_structural_ids)} annotations")
-        print(f"  Progressive: {len(progressive_structural_ids)} annotations")
+        logger.debug("\nStructural Annotations:")
+        logger.debug(f"  Monolithic: {len(monolithic_structural_ids)} annotations")
+        logger.debug(f"  Progressive: {len(progressive_structural_ids)} annotations")
 
         # ASSERTION 2: Same structural annotation IDs
         self.assertEqual(
             monolithic_structural_ids,
             progressive_structural_ids,
-            "Structural annotation ID sets must be EXACTLY THE SAME"
+            "Structural annotation ID sets must be EXACTLY THE SAME",
         )
-        print(f"✅ ASSERTION PASSED: Structural annotation sets are IDENTICAL")
+        logger.debug("✅ ASSERTION PASSED: Structural annotation sets are IDENTICAL")
 
-        print(f"\nAll Annotations:")
-        print(f"  Monolithic: {len(monolithic_ann_ids)} annotations")
-        print(f"  Progressive: {len(progressive_ann_ids)} annotations")
+        logger.debug("\nAll Annotations:")
+        logger.debug(f"  Monolithic: {len(monolithic_ann_ids)} annotations")
+        logger.debug(f"  Progressive: {len(progressive_ann_ids)} annotations")
 
         # ASSERTION 3: Same annotation IDs
         self.assertEqual(
             monolithic_ann_ids,
             progressive_ann_ids,
-            "Annotation ID sets must be EXACTLY THE SAME"
+            "Annotation ID sets must be EXACTLY THE SAME",
         )
-        print(f"✅ ASSERTION PASSED: Annotation ID sets are IDENTICAL")
+        logger.debug("✅ ASSERTION PASSED: Annotation ID sets are IDENTICAL")
 
         # ASSERTION 4: Same annotation content
         for ann_id in monolithic_ann_ids:
@@ -507,19 +531,20 @@ class ParityProofTestCase(TransactionTestCase):
             p_ann = progressive_anns_by_id[ann_id]
 
             self.assertEqual(
-                m_ann["rawText"], p_ann["rawText"],
-                f"Raw text must match for annotation {ann_id}"
+                m_ann["rawText"],
+                p_ann["rawText"],
+                f"Raw text must match for annotation {ann_id}",
             )
             self.assertEqual(
-                m_ann["page"], p_ann["page"],
-                f"Page must match for annotation {ann_id}"
+                m_ann["page"], p_ann["page"], f"Page must match for annotation {ann_id}"
             )
             self.assertEqual(
-                m_ann["structural"], p_ann["structural"],
-                f"Structural flag must match for annotation {ann_id}"
+                m_ann["structural"],
+                p_ann["structural"],
+                f"Structural flag must match for annotation {ann_id}",
             )
 
-        print(f"✅ ASSERTION PASSED: All annotation content is IDENTICAL")
+        logger.debug("✅ ASSERTION PASSED: All annotation content is IDENTICAL")
 
         # ASSERTION 5: Same notes
         monolithic_note_ids = {
@@ -532,9 +557,9 @@ class ParityProofTestCase(TransactionTestCase):
         self.assertEqual(
             monolithic_note_ids,
             progressive_note_ids,
-            "Note ID sets must be EXACTLY THE SAME"
+            "Note ID sets must be EXACTLY THE SAME",
         )
-        print(f"✅ ASSERTION PASSED: Note sets are IDENTICAL")
+        logger.debug("✅ ASSERTION PASSED: Note sets are IDENTICAL")
 
         # ASSERTION 6: Same relationships
         monolithic_rel_ids = {
@@ -547,18 +572,20 @@ class ParityProofTestCase(TransactionTestCase):
         self.assertEqual(
             monolithic_rel_ids,
             progressive_rel_ids,
-            "Relationship ID sets must be EXACTLY THE SAME"
+            "Relationship ID sets must be EXACTLY THE SAME",
         )
-        print(f"✅ ASSERTION PASSED: Relationship sets are IDENTICAL")
+        logger.debug("✅ ASSERTION PASSED: Relationship sets are IDENTICAL")
 
         # ========== FINAL SUMMARY ==========
-        print(f"\n{'='*70}")
-        print("PROOF COMPLETE")
-        print(f"{'='*70}")
-        print(f"✅ PROVEN: Progressive loading is {speedup_factor:.2f}x FASTER")
-        print(f"✅ PROVEN: Data sets are EXACTLY THE SAME")
-        print(f"  - {len(monolithic_ann_ids)} annotations matched perfectly")
-        print(f"  - {len(monolithic_structural_ids)} structural annotations matched perfectly")
-        print(f"  - {len(monolithic_note_ids)} notes matched perfectly")
-        print(f"  - {len(monolithic_rel_ids)} relationships matched perfectly")
-        print(f"{'='*70}\n")
+        logger.debug(f"\n{'='*70}")
+        logger.debug("PROOF COMPLETE")
+        logger.debug(f"{'='*70}")
+        logger.debug(f"✅ PROVEN: Progressive loading is {speedup_factor:.2f}x FASTER")
+        logger.debug("✅ PROVEN: Data sets are EXACTLY THE SAME")
+        logger.debug(f"  - {len(monolithic_ann_ids)} annotations matched perfectly")
+        logger.debug(
+            f"  - {len(monolithic_structural_ids)} structural annotations matched perfectly"
+        )
+        logger.debug(f"  - {len(monolithic_note_ids)} notes matched perfectly")
+        logger.debug(f"  - {len(monolithic_rel_ids)} relationships matched perfectly")
+        logger.debug(f"{'='*70}\n")

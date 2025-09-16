@@ -33,12 +33,12 @@ class AnnotationSummaryType(graphene.ObjectType):
     last_refreshed = graphene.DateTime()
 
     @classmethod
-    def resolve_for_document(cls, document_id: int, corpus_id: int):
+    def resolve_for_document(cls, document_id: int, corpus_id: int, user=None):
         """
-        Resolve summary statistics for a document.
+        Resolve summary statistics for a document with permission filtering.
         """
         summary = AnnotationQueryOptimizer.get_annotation_summary(
-            document_id=document_id, corpus_id=corpus_id, use_mv=True
+            document_id=document_id, corpus_id=corpus_id, user=user, use_mv=True
         )
 
         return cls(document_id=document_id, corpus_id=corpus_id, **summary)
@@ -55,14 +55,19 @@ class AnnotationNavigationType(graphene.ObjectType):
 
     @classmethod
     def resolve_for_document(
-        cls, document_id: int, corpus_id: int, analysis_id: Optional[int] = None
+        cls,
+        document_id: int,
+        corpus_id: int,
+        user=None,
+        analysis_id: Optional[int] = None,
     ):
         """
-        Get navigation data for document annotations.
+        Get navigation data for document annotations with permission filtering.
         """
         nav_data = AnnotationQueryOptimizer.get_navigation_annotations(
             document_id=document_id,
             corpus_id=corpus_id,
+            user=user,
             analysis_id=analysis_id,
             use_mv=True,
         )

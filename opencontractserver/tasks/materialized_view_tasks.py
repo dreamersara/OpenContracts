@@ -24,13 +24,67 @@ def refresh_annotation_summary_mv(document_id=None, corpus_id=None):
     try:
         with connection.cursor() as cursor:
             if document_id and corpus_id:
-                # Targeted refresh (future optimization - needs partial refresh support)
+                # Targeted refresh (full MV refresh currently, but we will overwrite per-user caches)
                 logger.info(
                     f"Refreshing annotation_summary_mv for doc {document_id}, corpus {corpus_id}"
                 )
                 cursor.execute(
                     "REFRESH MATERIALIZED VIEW CONCURRENTLY annotation_summary_mv"
                 )
+
+                # Read fresh summary once from MV
+                cursor.execute(
+                    """
+                    SELECT
+                        annotation_count,
+                        structural_count,
+                        user_annotation_count,
+                        analysis_count,
+                        page_count,
+                        pages_with_annotations,
+                        first_annotated_page,
+                        last_annotated_page
+                    FROM annotation_summary_mv
+                    WHERE document_id = %s AND corpus_id = %s
+                    """,
+                    [document_id, corpus_id],
+                )
+                row = cursor.fetchone()
+                fresh_summary = None
+                if row:
+                    fresh_summary = {
+                        "annotation_count": row[0] or 0,
+                        "structural_count": row[1] or 0,
+                        "user_annotation_count": row[2] or 0,
+                        "analysis_count": row[3] or 0,
+                        "page_count": row[4] or 0,
+                        "pages_with_annotations": row[5] or [],
+                        "first_page": row[6],
+                        "last_page": row[7],
+                        "source": "materialized_view",
+                    }
+
+                # Overwrite per-user cached summaries registered for this pair
+                registry_key = f"annotation_summary:users:{document_id}:{corpus_id}"
+                try:
+                    registry = cache.get(registry_key) or []
+                except Exception:
+                    registry = []
+
+                if fresh_summary and registry:
+                    for user_id in registry:
+                        user_cache_key = (
+                            f"annotation_summary:{document_id}:{corpus_id}:{user_id}"
+                        )
+                        cache.set(user_cache_key, fresh_summary, 300)
+
+                # Best-effort cleanup of any legacy keys (optional)
+                try:
+                    cache.delete_pattern(
+                        f"annotation_summary:{document_id}:{corpus_id}:*"
+                    )
+                except AttributeError:
+                    logger.debug("Cache backend doesn't support pattern deletion")
             else:
                 # Full refresh
                 logger.info("Performing full refresh of annotation_summary_mv")
@@ -38,13 +92,12 @@ def refresh_annotation_summary_mv(document_id=None, corpus_id=None):
                     "REFRESH MATERIALIZED VIEW CONCURRENTLY annotation_summary_mv"
                 )
 
-        # Clear any related caches
-        if document_id and corpus_id:
-            cache_key = f"annotation_summary:{document_id}:{corpus_id}"
-            cache.delete(cache_key)
-        else:
-            # Clear all annotation summary caches (pattern-based delete if supported)
-            cache.delete_pattern("annotation_summary:*")
+        # Clear any related caches (broad cleanup only for full refresh)
+        if not (document_id and corpus_id):
+            try:
+                cache.delete_pattern("annotation_summary:*")
+            except AttributeError:
+                logger.debug("Cache backend doesn't support pattern deletion")
 
         logger.info("Successfully refreshed annotation_summary_mv")
         return True
@@ -75,7 +128,11 @@ def refresh_annotation_navigation_mv(document_id=None, corpus_id=None):
             cache_key = f"annotation_nav:{document_id}:{corpus_id}"
             cache.delete(cache_key)
         else:
-            cache.delete_pattern("annotation_nav:*")
+            try:
+                cache.delete_pattern("annotation_nav:*")
+            except AttributeError:
+                # Cache backend doesn't support pattern deletion (e.g., LocMemCache)
+                logger.debug("Cache backend doesn't support pattern deletion")
 
         logger.info("Successfully refreshed annotation_navigation_mv")
         return True

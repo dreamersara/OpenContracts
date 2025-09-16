@@ -215,7 +215,11 @@ class QueryOptimizerTestCase(BaseFixtureTestCase):
 
         # Test page-specific query
         result = AnnotationQueryOptimizer.get_document_annotations(
-            document_id=self.doc.id, corpus_id=self.corpus.id, page=2, use_cache=False
+            document_id=self.doc.id,
+            user=self.user,
+            corpus_id=self.corpus.id,
+            page=2,
+            use_cache=False,
         )
 
         annotations = list(result)
@@ -241,6 +245,7 @@ class QueryOptimizerTestCase(BaseFixtureTestCase):
         summary = AnnotationQueryOptimizer.get_annotation_summary(
             document_id=self.doc.id,
             corpus_id=self.corpus.id,
+            user=self.user,
             use_mv=False,  # Force direct query for testing
         )
 
@@ -292,6 +297,7 @@ class QueryOptimizerTestCase(BaseFixtureTestCase):
         nav_annotations = AnnotationQueryOptimizer.get_navigation_annotations(
             document_id=self.doc.id,
             corpus_id=self.corpus.id,
+            user=self.user,
             use_mv=False,  # Force direct query for testing
         )
 
@@ -328,6 +334,7 @@ class QueryOptimizerTestCase(BaseFixtureTestCase):
         start = time.perf_counter()
         result = AnnotationQueryOptimizer.get_document_annotations(
             document_id=self.doc.id,
+            user=self.user,
             corpus_id=self.corpus.id,
             page=25,
             structural=False,

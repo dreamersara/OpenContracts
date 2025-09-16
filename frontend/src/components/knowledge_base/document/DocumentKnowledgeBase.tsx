@@ -978,7 +978,11 @@ const DocumentKnowledgeBase: React.FC<DocumentKnowledgeBaseProps> = ({
         setViewState(ViewState.LOADING); // Set loading state
         const docId = data.document.id;
         const textHash = data.document.pdfFileHash; // Can use same hash field for text files
-        getDocumentRawText(data.document.txtExtractFile, docId, textHash)
+        getDocumentRawText(
+          data.document.txtExtractFile,
+          docId,
+          textHash ?? undefined
+        )
           .then((txt) => {
             setDocText(txt);
             setViewState(ViewState.LOADED);

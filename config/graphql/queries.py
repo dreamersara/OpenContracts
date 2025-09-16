@@ -11,6 +11,7 @@ from graphene.types.generic import GenericScalar
 from graphene_django.debug import DjangoDebug
 from graphene_django.fields import DjangoConnectionField
 from graphene_django.filter import DjangoFilterConnectionField
+from graphql import GraphQLError
 from graphql_jwt.decorators import login_required
 from graphql_relay import from_global_id
 
@@ -852,14 +853,20 @@ class Query(graphene.ObjectType):
             "embedding_set",
         )
 
-        if info.context.user.is_superuser:
-            return base_queryset.get(id=django_pk)
-        elif info.context.user.is_anonymous:
-            return base_queryset.get(Q(id=django_pk) & Q(is_public=True))
-        else:
-            return base_queryset.get(
-                Q(id=django_pk) & (Q(creator=info.context.user) | Q(is_public=True))
-            )
+        try:
+            if info.context.user.is_superuser:
+                return base_queryset.get(id=django_pk)
+            elif info.context.user.is_anonymous:
+                return base_queryset.get(Q(id=django_pk) & Q(is_public=True))
+            else:
+                return base_queryset.get(
+                    Q(id=django_pk) & (Q(creator=info.context.user) | Q(is_public=True))
+                )
+        except Document.DoesNotExist:
+            # Distinguish between not found vs no permission for clearer API semantics
+            if Document.objects.filter(id=django_pk).exists():
+                raise GraphQLError("Permission denied for this document.")
+            raise GraphQLError("Document not found.")
 
     # IMPORT RESOLVERS #####################################
     userimports = DjangoConnectionField(UserImportType)
