@@ -3,19 +3,20 @@
 ## Implementation Checklist
 
 ### Phase 1: Backend Enhancement (1-2 days)
-- [ ] Extend `pageAnnotations` to accept multiple pages ([see 3.1.1](#311-extend-pageannotations-to-accept-multiple-pages))
-- [ ] Add relationship filtering by page ([see 3.1.2](#312-add-relationship-filtering-by-page))
-- [ ] Test multi-page query performance with existing optimizer
+- [x] Extend `pageAnnotations` to accept multiple pages ([see 3.1.1](#311-extend-pageannotations-to-accept-multiple-pages))
+- [x] Add relationship filtering by page ([see 3.1.2](#312-add-relationship-filtering-by-page))
+- [x] Test multi-page query performance with existing optimizer
 
 ### Phase 2: Frontend Query Updates (1 day)
 - [ ] Create `GET_DOCUMENT_INITIAL` query ([see 3.2.1](#321-create-new-progressive-queries))
-- [ ] Create `GET_PAGE_ANNOTATIONS` query ([see 3.2.1](#321-create-new-progressive-queries))
+- [ ] Create `GET_PAGE_DATA` query with `pageAnnotations` and `pageRelationships` ([see 3.2.1](#321-create-new-progressive-queries))
 - [ ] Create `useProgressiveAnnotations` hook ([see 3.2.2](#322-create-viewport-aware-annotation-hook))
 
 ### Phase 3: Integrate with DocumentKnowledgeBase (2-3 days)
 - [ ] Replace monolithic query with initial lightweight query ([see 3.3.1](#331-replace-monolithic-query))
 - [ ] Split `processAnnotationsData` into initial + incremental ([see 3.3.2](#332-update-processannotationsdata))
-- [ ] Connect PDF viewport to progressive loading ([see 3.3.3](#333-connect-pdf-viewport-to-loading))
+- [ ] Connect PDF viewport to progressive loading via a callback prop ([see 3.3.3](#333-connect-pdf-viewport-to-loading))
+- [ ] Add feature flag switch between monolithic and progressive modes ([see 3.5.2](#352-feature-flags))
 
 ### Phase 4: Jump-to-Annotation Support (1 day)
 - [ ] Handle direct annotation navigation ([see 3.4.1](#341-handle-direct-annotation-navigation))
@@ -57,10 +58,12 @@ The `processAnnotationsData` function (`DocumentKnowledgeBase.tsx:491-624`) proc
 ### 1.3 Existing Infrastructure We Can Leverage
 
 ✅ **Backend Ready**:
-- `annotationSummary` field exists (`config/graphql/graphene_types.py:806-821`)
-- `pageAnnotations` resolver supports single-page queries (`config/graphql/graphene_types.py`)
-- Materialized views for summaries (`docs/frontend/doc-data-query-optimizations.md:64-67`)
-- Query optimizer with caching (`docs/frontend/doc-data-query-optimizations.md:111-115`)
+- `annotation_summary` GraphQL field exists (`config/graphql/graphene_types.py:806-816`)
+- `relationship_summary` GraphQL field exists (`config/graphql/graphene_types.py:989-1026`)
+- `page_annotations` supports single and multiple pages plus structural/analysis filters (`config/graphql/graphene_types.py:865-887`)
+- `page_relationships` supports page filtering and structural/analysis filters (`config/graphql/graphene_types.py:875-882, 943-987`)
+- Materialized views for summaries (`docs/frontend/doc-data-query-optimizations.md:74-83`)
+- Query optimizers with caching and permission checks (`docs/frontend/doc-data-query-optimizations.md:133-153`)
 
 ✅ **Frontend Viewport Detection Works**:
 - PDF component already implements virtual windowing (`frontend/src/components/annotator/renderers/pdf/PDF.tsx:260-328`)
@@ -108,6 +111,7 @@ query GetDocumentInitial($documentId: String!, $corpusId: ID!) {
       pageCount
       pagesWithAnnotations  # Array of page numbers
     }
+    relationshipSummary(corpusId: $corpusId)  # lightweight relationship stats
   }
   corpus(id: $corpusId) {
     # Labels (cached after first load)
@@ -115,13 +119,29 @@ query GetDocumentInitial($documentId: String!, $corpusId: ID!) {
   }
 }
 
-# 2. Page-based annotation query
-query GetPageAnnotations($documentId: String!, $corpusId: ID!, $pages: [Int!]!) {
+# 2. Page-based annotations and relationships
+query GetPageData(
+  $documentId: String!
+  $corpusId: ID!
+  $pages: [Int!]!
+  $structural: Boolean
+  $analysisId: ID
+) {
   document(id: $documentId) {
-    pageAnnotations(corpusId: $corpusId, pages: $pages) {
+    pageAnnotations(
+      corpusId: $corpusId
+      pages: $pages
+      structural: $structural
+      analysisId: $analysisId
+    ) {
       # Same fields as current allAnnotations
     }
-    pageRelationships(corpusId: $corpusId, pages: $pages) {
+    pageRelationships(
+      corpusId: $corpusId
+      pages: $pages
+      structural: $structural
+      analysisId: $analysisId
+    ) {
       # Relationships touching these pages
     }
   }
@@ -137,47 +157,31 @@ query GetPageAnnotations($documentId: String!, $corpusId: ID!, $pages: [Int!]!) 
 #### 3.1.1 Extend `pageAnnotations` to accept multiple pages
 **File**: `config/graphql/graphene_types.py`
 ```python
-# Current (single page):
+# Already implemented (multi-page + optional single page)
 page_annotations = graphene.List(
     AnnotationType,
-    page=graphene.Int(required=True),
-    ...
+    corpus_id=graphene.ID(required=True),
+    page=graphene.Int(),
+    pages=graphene.List(graphene.Int),
+    structural=graphene.Boolean(),
+    analysis_id=graphene.ID(),
 )
 
-# Enhanced (multiple pages):
-page_annotations = graphene.List(
-    AnnotationType,
-    pages=graphene.List(graphene.Int),  # NEW: Accept array
-    page=graphene.Int(),  # Keep for backwards compat
+def resolve_page_annotations(self, info, corpus_id, page=None, pages=None, structural=None, analysis_id=None):
+    """Implemented: supports both single and multi-page with filters."""
     ...
-)
-
-def resolve_page_annotations(self, info, corpus_id, pages=None, page=None, ...):
-    # Support both single and multi-page
-    if page is not None:
-        page_list = [page]
-    elif pages:
-        page_list = pages
-    else:
-        return []
-
-    # Use existing optimizer with IN clause
-    return AnnotationQueryOptimizer.get_document_annotations(
-        document_id=self.id,
-        user=info.context.user,
-        corpus_id=corpus_id,
-        pages=page_list,  # Pass list to optimizer
-        ...
-    )
 ```
 
 #### 3.1.2 Add relationship filtering by page
 **File**: `config/graphql/graphene_types.py`
 ```python
+# Already implemented
 page_relationships = graphene.List(
     RelationshipType,
-    pages=graphene.List(graphene.Int),
     corpus_id=graphene.ID(required=True),
+    pages=graphene.List(graphene.Int, required=True),
+    structural=graphene.Boolean(),
+    analysis_id=graphene.ID(),
 )
 ```
 
@@ -186,8 +190,8 @@ page_relationships = graphene.List(
 #### 3.2.1 Create new progressive queries
 **File**: `frontend/src/graphql/queries.ts`
 ```typescript
-export const GET_DOCUMENT_INITIAL = gql`...`;  // As shown above
-export const GET_PAGE_ANNOTATIONS = gql`...`;   // Page-based query
+export const GET_DOCUMENT_INITIAL = gql`...`;
+export const GET_PAGE_DATA = gql`...`;   // annotations + relationships per pages
 ```
 
 #### 3.2.2 Create viewport-aware annotation hook
@@ -196,18 +200,20 @@ export const GET_PAGE_ANNOTATIONS = gql`...`;   // Page-based query
 export function useProgressiveAnnotations({
   documentId,
   corpusId,
-  visiblePages,  // From PDF viewport
+  visiblePages,  // From PDF viewport (zero-based indices -> convert to 1-based)
+  structural,
+  analysisId,
+  enabled = true,
 }) {
   const [loadedPages, setLoadedPages] = useState(new Set());
   const [isLoading, setIsLoading] = useState(false);
 
   // Load annotations for new visible pages
   useEffect(() => {
+    if (!enabled) return;
     const pagesToLoad = visiblePages.filter(p => !loadedPages.has(p));
-    if (pagesToLoad.length > 0) {
-      loadAnnotationsForPages(pagesToLoad);
-    }
-  }, [visiblePages]);
+    if (pagesToLoad.length > 0) loadPageData(pagesToLoad);
+  }, [visiblePages, enabled]);
 
   // ... loading logic
 }
@@ -226,7 +232,7 @@ const { data: initialData, loading: initialLoading } = useQuery(
   { variables: { documentId, corpusId } }
 );
 
-// Track visible pages from PDF component
+// Track visible pages from PDF component (zero-based indices)
 const [visiblePages, setVisiblePages] = useState<number[]>([]);
 
 // Progressive annotation loading
@@ -235,6 +241,8 @@ const { annotations, relationships } = useProgressiveAnnotations({
   corpusId,
   visiblePages,
   enabled: !initialLoading && initialData?.document,
+  structural: undefined,
+  analysisId: undefined,
 });
 ```
 
@@ -261,7 +269,7 @@ const processPageAnnotations = (pageData, pageNumbers) => {
 ```typescript
 // In PDF.tsx, expose visible page range
 useEffect(() => {
-  onVisiblePagesChange?.(range);  // Callback to parent
+  onVisiblePagesChange?.(range);
 }, [range]);
 ```
 
@@ -298,6 +306,17 @@ const query = USE_PROGRESSIVE_LOADING
   : GET_DOCUMENT_KNOWLEDGE_AND_ANNOTATIONS;
 ```
 
+#### 3.5.3 Testing Adjustments for Progressive Loading
+- Add unit tests around the new queries in `frontend/src/graphql/queries.ts` to ensure variables and selections match backend schema (`annotationSummary`, `pageAnnotations`, `pageRelationships`).
+- Add integration tests for `DocumentKnowledgeBase` to verify:
+  - Initial render issues only `GET_DOCUMENT_INITIAL` and does not fetch all annotations.
+  - As the PDF viewport changes, `GET_PAGE_DATA` is fired with the correct page ranges and merges results into atoms without clearing unrelated pages.
+  - Jump-to-annotation path loads specific pages first and then scrolls to the element.
+- Add tests for hook behavior in `useProgressiveAnnotations` covering:
+  - Deduplicated page loads across scrolls.
+  - Respect of `enabled`, `structural`, and `analysisId` parameters.
+  - Cache reset when corpus/document/analysis changes.
+
 ---
 
 ## 4. Risk Mitigation
@@ -312,6 +331,8 @@ const query = USE_PROGRESSIVE_LOADING
 - **Relationships**: May connect annotations on different pages - load both endpoints
 - **Search results**: Pre-load pages containing search matches
 - **Analysis switching**: Clear page cache when analysis changes
+ - **Structural-only views**: Respect `structural` filter in both annotations and relationships
+ - **Permission changes**: Refetch summaries when user context changes
 
 ### 4.3 Cache Invalidation
 ```typescript
@@ -324,29 +345,7 @@ const query = USE_PROGRESSIVE_LOADING
 
 ---
 
-## 5. Expected Performance Improvements
-
-Based on backend optimizations already in place (`docs/frontend/doc-data-query-optimizations.md:343-351`):
-
-| Metric | Current | Expected | Improvement |
-|--------|---------|----------|-------------|
-| Initial Load | 10-30s | <500ms | **20-60x faster** |
-| Memory Usage | 500MB+ | <50MB | **90% reduction** |
-| Query Size | 5-10MB | ~50KB/page | **100x smaller** |
-| Scroll Performance | Laggy | Smooth | **Immediate** |
-
----
-
-## 6. Implementation Priority
-
-1. **Week 1**: Backend multi-page support + frontend queries
-2. **Week 2**: Progressive loading hook + initial integration
-3. **Week 3**: Complete migration + testing
-4. **Week 4**: Optimization + monitoring
-
----
-
-## Key Citations
+## Key Code Cites
 
 - Monolithic query definition: `frontend/src/graphql/queries.ts:2252-2388`
 - Query consumption: `frontend/src/components/knowledge_base/document/DocumentKnowledgeBase.tsx:833-1032`
