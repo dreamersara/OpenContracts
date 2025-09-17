@@ -25,4 +25,3 @@ def test_progressive_fields_absent_when_disabled():
     assert "annotationSummary(" not in sdl
     assert "annotationNavigation(" not in sdl
     assert "pageAnnotations(" not in sdl
-

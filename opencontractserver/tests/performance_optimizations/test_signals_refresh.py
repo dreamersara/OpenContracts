@@ -117,4 +117,3 @@ class SignalsRefreshSchedulingTest(BaseFixtureTestCase):
         assert self._nav_count(self.doc.id, corpus.id) == 0
         a_count, s_count, p_count = self._summary_counts(self.doc.id, corpus.id)
         assert (a_count, s_count, p_count) == (0, 1, 1)
-

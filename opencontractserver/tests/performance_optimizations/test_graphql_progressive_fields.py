@@ -208,3 +208,138 @@ class GraphQLProgressiveFieldsTest(BaseFixtureTestCase):
         assert "errors" not in res_nonstruct, res_nonstruct.get("errors")
         assert len(res_nonstruct["data"]["document"]["pageAnnotations"]) == 2
 
+    def test_page_annotations_with_multiple_pages(self):
+        """
+        Test that pageAnnotations can accept multiple pages and returns correct data.
+        """
+        query = """
+        query MultiPageAnn($docId: String!, $corpusId: ID!, $pages: [Int!]) {
+          document(id: $docId) {
+            id
+            pageAnnotations(corpusId: $corpusId, pages: $pages) {
+              id
+              page
+              rawText
+              structural
+            }
+          }
+        }
+        """
+
+        # Test with pages 1 and 3 (should get 3 annotations per page = 6 total)
+        result = self.client.execute(
+            query,
+            variables={
+                "docId": self.doc_gid,
+                "corpusId": self.corpus_gid,
+                "pages": [1, 3],
+            },
+            context_value=type("obj", (object,), {"user": self.user})(),
+        )
+        assert "errors" not in result, result.get("errors")
+        annotations = result["data"]["document"]["pageAnnotations"]
+        assert len(annotations) == 6  # 3 annotations x 2 pages
+
+        # Verify we only got pages 1 and 3
+        pages_returned = {ann["page"] for ann in annotations}
+        assert pages_returned == {1, 3}
+
+        # Verify we got both structural and non-structural
+        structural_count = sum(1 for ann in annotations if ann["structural"])
+        non_structural_count = sum(1 for ann in annotations if not ann["structural"])
+        assert structural_count == 2  # 1 per page
+        assert non_structural_count == 4  # 2 per page
+
+    def test_page_annotations_single_page_backwards_compat(self):
+        """
+        Test that the original single 'page' parameter still works for backwards compatibility.
+        """
+        query = """
+        query SinglePageAnn($docId: String!, $corpusId: ID!, $page: Int!) {
+          document(id: $docId) {
+            id
+            pageAnnotations(corpusId: $corpusId, page: $page) {
+              id
+              page
+              rawText
+            }
+          }
+        }
+        """
+
+        result = self.client.execute(
+            query,
+            variables={
+                "docId": self.doc_gid,
+                "corpusId": self.corpus_gid,
+                "page": 2,
+            },
+            context_value=type("obj", (object,), {"user": self.user})(),
+        )
+        assert "errors" not in result, result.get("errors")
+        annotations = result["data"]["document"]["pageAnnotations"]
+        assert len(annotations) == 3  # 3 annotations on page 2
+        assert all(ann["page"] == 2 for ann in annotations)
+
+    def test_page_annotations_empty_pages_list(self):
+        """
+        Test that providing an empty pages list returns empty result.
+        """
+        query = """
+        query EmptyPagesAnn($docId: String!, $corpusId: ID!, $pages: [Int!]) {
+          document(id: $docId) {
+            id
+            pageAnnotations(corpusId: $corpusId, pages: $pages) {
+              id
+            }
+          }
+        }
+        """
+
+        result = self.client.execute(
+            query,
+            variables={
+                "docId": self.doc_gid,
+                "corpusId": self.corpus_gid,
+                "pages": [],
+            },
+            context_value=type("obj", (object,), {"user": self.user})(),
+        )
+        assert "errors" not in result, result.get("errors")
+        assert result["data"]["document"]["pageAnnotations"] == []
+
+    def test_page_annotations_with_analysis_and_multiple_pages(self):
+        """
+        Test that multiple pages work with analysis filtering.
+        """
+        query = """
+        query MultiPageWithAnalysis($docId: String!, $corpusId: ID!, $pages: [Int!], $analysisId: ID) {
+          document(id: $docId) {
+            id
+            pageAnnotations(corpusId: $corpusId, pages: $pages, analysisId: $analysisId) {
+              id
+              page
+              rawText
+            }
+          }
+        }
+        """
+
+        # With analysis - should only get 1 non-structural annotation per page with analysis
+        result = self.client.execute(
+            query,
+            variables={
+                "docId": self.doc_gid,
+                "corpusId": self.corpus_gid,
+                "pages": [1, 2, 3],
+                "analysisId": self.analysis_gid,
+            },
+            context_value=type("obj", (object,), {"user": self.user})(),
+        )
+        assert "errors" not in result, result.get("errors")
+        annotations = result["data"]["document"]["pageAnnotations"]
+        assert len(annotations) == 3  # 1 analyzed annotation per page
+
+        # Verify each annotation contains "with-analysis" in raw text
+        for ann in annotations:
+            assert "with-analysis" in ann["rawText"]

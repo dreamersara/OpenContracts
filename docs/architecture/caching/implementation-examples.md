@@ -778,4 +778,3 @@ These implementation examples provide practical, production-ready patterns for i
 6. **Prefetch related data** to avoid N+1 queries
 
 The combination of these patterns enables the 30-60x performance improvements seen in production.
-

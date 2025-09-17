@@ -508,4 +508,3 @@ The new query optimization paradigm represents a fundamental shift in how OpenCo
 - **Scalability** to handle documents with thousands of annotations
 
 The key to success is understanding the patterns, avoiding the pitfalls, and consistently applying the optimization strategies across the codebase.
-

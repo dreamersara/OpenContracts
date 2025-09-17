@@ -253,4 +253,3 @@ When migrating code to use progressive loading:
 ---
 
 **Remember:** The goal is **sub-second initial loads** with **complete data parity**. When in doubt, use the `AnnotationQueryOptimizer`!
-

@@ -358,4 +358,3 @@ class PermissionFilteringTest(BaseFixtureTestCase):
 
         # Should get null document (filtered by get_queryset)
         self.assertIsNone(result["data"]["document"])
-

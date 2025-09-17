@@ -91,4 +91,3 @@ class NavigationOrderingTest(BaseFixtureTestCase):
         for page in sorted(set(pages)):
             ids = [n["id"] for n in nav_list if n["page"] == page]
             assert ids == sorted(ids)
-

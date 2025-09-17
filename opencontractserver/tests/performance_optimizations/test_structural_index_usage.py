@@ -55,4 +55,3 @@ class StructuralIndexUsageTest(BaseFixtureTestCase):
               AND structural = true
         """
         assert self._uses_index(sql, [self.doc.id])
-

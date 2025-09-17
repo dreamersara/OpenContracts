@@ -69,4 +69,3 @@ class CacheInvalidationTest(BaseFixtureTestCase):
             self.doc.id, self.corpus.id, user=self.user, use_mv=True
         )
         assert after["annotation_count"] == 2
-

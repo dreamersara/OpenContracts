@@ -193,4 +193,3 @@ class GraphQLNumQueriesTest(BaseFixtureTestCase):
 
         # Query count should stay the same or increase by at most a couple due to caching/planning variance
         assert len(ctx2.captured_queries) <= baseline + 2
-

@@ -114,4 +114,3 @@ class GraphQLAuthzTest(BaseFixtureTestCase):
         )
         assert "errors" not in res, res.get("errors")
         assert len(res["data"]["document"]["annotationNavigation"]) == 2
-

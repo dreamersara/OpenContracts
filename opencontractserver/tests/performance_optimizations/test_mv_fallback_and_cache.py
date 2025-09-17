@@ -125,4 +125,3 @@ class MaterializedViewFallbackAndCacheTest(BaseFixtureTestCase):
             calls = [c.args[0] for c in mock_del.call_args_list]
             assert "annotation_summary:*" in calls
             assert "annotation_nav:*" in calls
-

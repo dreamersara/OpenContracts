@@ -78,4 +78,3 @@ class CacheTTLBehaviorTest(BaseFixtureTestCase):
             assert refreshed["annotation_count"] == 2
         finally:
             AnnotationQueryOptimizer.CACHE_TTL = original_ttl
-

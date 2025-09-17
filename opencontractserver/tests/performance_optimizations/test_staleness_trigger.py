@@ -40,4 +40,3 @@ class StalenessTriggerTest(BaseFixtureTestCase):
             assert mv.get("max_staleness_seconds") is None
         else:
             assert (mv.get("max_staleness_seconds") or 0) >= 0
-

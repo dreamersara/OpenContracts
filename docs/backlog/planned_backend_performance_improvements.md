@@ -126,4 +126,3 @@ Track which queries are being used to measure migration progress:
 - GraphQL Types: `config/graphql/graphene_types.py`
 - Frontend Component: `frontend/src/components/knowledge_base/document/DocumentKnowledgeBase.tsx`
 - Original optimization doc: `docs/frontend/doc-data-query-optimizations.md`
-

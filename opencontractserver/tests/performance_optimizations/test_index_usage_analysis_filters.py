@@ -94,4 +94,3 @@ class AnalysisFilterIndexUsageTest(BaseFixtureTestCase):
         assert self._plan_uses_index(
             sql, [self.doc.id, self.corpus.id, self.analysis.id]
         )
-

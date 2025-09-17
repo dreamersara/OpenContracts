@@ -102,4 +102,3 @@ class MultiCorpusSummaryTest(BaseFixtureTestCase):
         assert sum_b["page_count"] == 2
         assert sum_b["first_page"] == 1
         assert sum_b["last_page"] == 2
-

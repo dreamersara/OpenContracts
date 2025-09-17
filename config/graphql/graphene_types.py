@@ -657,32 +657,32 @@ class DocumentType(AnnotatePermissionsForReadMixin, DjangoObjectType):
     )
 
     def resolve_all_relationships(self, info, corpus_id=None, analysis_id=None):
+        """Resolve all relationships using the optimizer."""
+        from opencontractserver.annotations.query_optimizer import (
+            RelationshipQueryOptimizer,
+        )
+
         try:
-            # Want to limit to structural relationships or corpus relationships
-            if corpus_id is None:
-                relationships = self.relationships.filter(structural=True)
-            else:
-                corpus_pk = from_global_id(corpus_id)[1]
-                relationships = self.relationships.filter(
-                    Q(corpus_id=corpus_pk) | Q(structural=True)
-                )
+            corpus_pk = None
+            analysis_pk = None
 
-                # Filter based on analysis_id
-                # IMPORTANT: When analysis_id is None (not provided), we should only show
-                # user-created relationships (analysis__isnull=True) plus structural ones
-                if analysis_id is None or analysis_id == "__none__":
-                    # No analysis selected: show only user relationships (no analysis) + structural
-                    relationships = relationships.filter(
-                        Q(analysis__isnull=True) | Q(structural=True)
-                    )
-                else:
-                    # Specific analysis selected: show that analysis's relationships + structural
-                    analysis_pk = from_global_id(analysis_id)[1]
-                    relationships = relationships.filter(
-                        Q(analysis_id=analysis_pk) | Q(structural=True)
-                    )
+            if corpus_id:
+                _, corpus_pk = from_global_id(corpus_id)
+            if analysis_id and analysis_id != "__none__":
+                _, analysis_pk = from_global_id(analysis_id)
+            elif analysis_id == "__none__":
+                analysis_pk = 0  # Special case for user relationships
 
-            return relationships.distinct()
+            # Get user from context
+            user = info.context.user if hasattr(info.context, "user") else None
+
+            return RelationshipQueryOptimizer.get_document_relationships(
+                document_id=self.id,
+                user=user,
+                corpus_id=corpus_pk,
+                analysis_id=analysis_pk,
+                use_cache=True,
+            )
         except Exception as e:
             logger.warning(
                 f"Failed resolving relationships query for document {self.id} with input: corpus_id={corpus_id}, "
@@ -865,16 +865,25 @@ class DocumentType(AnnotatePermissionsForReadMixin, DjangoObjectType):
     page_annotations = graphene.List(
         AnnotationType,
         corpus_id=graphene.ID(required=True),
-        page=graphene.Int(required=True),
+        page=graphene.Int(),  # Now optional for backwards compatibility
+        pages=graphene.List(graphene.Int),  # NEW: Accept multiple pages
         structural=graphene.Boolean(),
         analysis_id=graphene.ID(),
-        description="Get annotations for a specific page using optimized queries",
+        description="Get annots for spec. page(s) using opt. queries. Either 'page' (single) or 'pages' (multiple).",
+    )
+
+    page_relationships = graphene.List(
+        RelationshipType,
+        corpus_id=graphene.ID(required=True),
+        pages=graphene.List(graphene.Int, required=True),
+        analysis_id=graphene.ID(),
+        description="Get relationships where source or target annotations are on the specified page(s).",
     )
 
     def resolve_page_annotations(
-        self, info, corpus_id, page, structural=None, analysis_id=None
+        self, info, corpus_id, page=None, pages=None, structural=None, analysis_id=None
     ):
-        """Resolve annotations for a specific page using optimized queries."""
+        """Resolve annotations for specific page(s) using optimized queries."""
         from django.contrib.auth.models import AnonymousUser
         from graphql import GraphQLError
 
@@ -908,12 +917,47 @@ class DocumentType(AnnotatePermissionsForReadMixin, DjangoObjectType):
                         "Permission denied: You do not have access to this document"
                     )
 
+        # Handle both single page and multiple pages
+        # Priority: if 'pages' is provided, use it; otherwise fall back to 'page'
+        page_list = None
+        if pages is not None and len(pages) > 0:
+            page_list = pages
+        elif page is not None:
+            page_list = [page]
+
+        # If neither is provided, return empty list (maintain backwards compatibility)
+        if page_list is None:
+            return []
+
         return AnnotationQueryOptimizer.get_document_annotations(
             document_id=self.id,
             user=user,
             corpus_id=corpus_pk,
-            page=page,
+            pages=page_list,  # Pass list of pages
             structural=structural,
+            analysis_id=analysis_pk,
+            use_cache=True,
+        )
+
+    def resolve_page_relationships(self, info, corpus_id, pages, analysis_id=None):
+        """Resolve relationships for specific page(s) using the optimizer."""
+        from opencontractserver.annotations.query_optimizer import (
+            RelationshipQueryOptimizer,
+        )
+
+        _, corpus_pk = from_global_id(corpus_id)
+        analysis_pk = None
+        if analysis_id:
+            _, analysis_pk = from_global_id(analysis_id)
+
+        # Get user from the GraphQL context
+        user = info.context.user if hasattr(info.context, "user") else None
+
+        return RelationshipQueryOptimizer.get_document_relationships(
+            document_id=self.id,
+            user=user,
+            corpus_id=corpus_pk,
+            pages=pages if pages else None,
             analysis_id=analysis_pk,
             use_cache=True,
         )

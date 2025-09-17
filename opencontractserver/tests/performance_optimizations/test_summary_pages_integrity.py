@@ -54,4 +54,3 @@ class SummaryPagesIntegrityTest(BaseFixtureTestCase):
         assert summary["first_page"] == min(pages)
         assert summary["last_page"] == max(pages)
         assert summary["page_count"] == len(pages)
-

@@ -118,4 +118,3 @@ class GraphQLInvalidIDsTest(BaseFixtureTestCase):
         )
         assert "errors" not in res, res.get("errors")
         assert res["data"]["document"]["annotationNavigation"] == []
-

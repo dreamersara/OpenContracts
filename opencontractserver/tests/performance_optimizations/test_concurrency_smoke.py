@@ -113,4 +113,3 @@ class ConcurrencySmokeTest(BaseFixtureTestCase):
         assert ann_count == 10
         assert struct_count == 5
         assert nav_count == 10
-
