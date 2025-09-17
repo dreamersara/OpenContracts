@@ -101,6 +101,15 @@ def refresh_annotation_navigation_mv(document_id=None, corpus_id=None):
     """
 
 @shared_task
+def refresh_relationship_summary_mv(document_id=None, corpus_id=None):
+    """
+    Refresh relationship summary materialized view.
+    - Performs CONCURRENT refresh to avoid blocking
+    - Updates per-user caches for the specific (document, corpus) via registry
+    - Gracefully handles cache backends without pattern deletion
+    """
+
+@shared_task
 def refresh_all_materialized_views():
     """
     Refresh all materialized views in dependency order.
@@ -115,7 +124,7 @@ def check_materialized_view_staleness():
     """
 ```
 
-**Note:** Signal-based refresh triggering is handled within the materialized view tasks. The system uses debouncing and staleness checks rather than immediate signal-based refresh to avoid excessive database operations.
+**Note:** Signal-based refresh triggering is handled within the materialized view tasks. The system uses debouncing and staleness checks rather than immediate signal-based refresh to avoid excessive database operations. Relationship create/update/delete and M2M changes are wired to trigger `refresh_relationship_summary_mv` after transaction commit via signal handlers in `/opencontractserver/annotations/apps.py` and `/opencontractserver/annotations/signals.py`.
 
 ### Phase 2: Query Optimization Layer
 
@@ -141,6 +150,7 @@ The file contains two optimizer classes:
    - Materialized view fallback for summaries
    - Per-user caching with 5-minute TTL
    - Optimized prefetching to prevent N+1 queries
+   - Always prefetches `source_annotations` and `target_annotations` even when results are served from cache (to avoid GraphQL N+1 when nested edges are requested)
 
 ### Phase 3: GraphQL Integration
 
@@ -151,6 +161,35 @@ The file contains two optimizer classes:
 #### 3.2 Update DocumentType
 
 **Implemented in:** `/config/graphql/graphene_types.py`
+
+New fields and updates:
+
+- `relationshipSummary(corpusId: ID!)`: MV-backed summary for relationships, returning counts and pages in an object (GraphQL `GenericScalar`).
+- `pageRelationships(corpusId: ID!, pages: [Int!]!, structural: Boolean, analysisId: ID)`: now supports a `structural` filter and applies explicit GraphQL permission checks consistent with annotations.
+
+Example queries:
+
+```graphql
+query GetRelationshipSummary($documentId: ID!, $corpusId: ID!) {
+  document(id: $documentId) {
+    relationshipSummary(corpusId: $corpusId)
+  }
+}
+```
+
+```graphql
+query GetPageRelationships($documentId: ID!, $corpusId: ID!, $pages: [Int!]!, $structural: Boolean) {
+  document(id: $documentId) {
+    pageRelationships(corpusId: $corpusId, pages: $pages, structural: $structural) {
+      id
+      structural
+      relationshipLabel { id text }
+      sourceAnnotations { edges { node { id page } } }
+      targetAnnotations { edges { node { id page } } }
+    }
+  }
+}
+```
 
 ### Phase 4: Frontend Integration
 
@@ -306,6 +345,9 @@ export function useAnnotationSummary({
   - Structural vs non-structural filtering
   - Analysis-specific filtering
   - Cache key generation and uniqueness
+- `test_graphql_page_relationships_perm_structural.py` - Verifies GraphQL-level permission checks for private documents and correctness of the `structural` filter in `pageRelationships`.
+- `test_graphql_relationship_summary.py` - Validates the `relationshipSummary` GraphQL field returns counts and pages as an object.
+- `test_relationship_mv_refresh.py` - Ensures `refresh_relationship_summary_mv` refreshes MV and overwrites per-user cached summaries for a specific (document, corpus).
 
 #### 5.2 Monitorin
 
@@ -375,7 +417,7 @@ with connection.cursor() as cursor:
 3. **Cache Strategy:**
    - 5-minute TTL for all cached data
    - Per-user cache keys prevent cross-user data leakage
-   - Graceful fallback when cache backend doesn't support pattern deletion
+   - Registry-based invalidation for annotations and relationships enables explicit key deletion when the cache backend does not support pattern deletion
 
 ---
 
