@@ -1,15 +1,15 @@
-# OpenContracts Annotation Performance Optimization Guide
+# OpenContracts Annotation & Relationship Performance Optimization Guide
 
 ## Executive Summary
 
-The OpenContracts `GetDocumentKnowledgeAndAnnotations` query suffers from (not unexpected) performance issues (10-30+ seconds) due to loading ALL annotations for a corpus. This documents the **implemented optimizations**:
+The OpenContracts `GetDocumentKnowledgeAndAnnotations` query suffers from (not unexpected) performance issues (10-30+ seconds) due to loading ALL annotations and relationships for a corpus. This documents the **implemented optimizations**:
 
-1. **Database Optimization**: Strategic indexes and materialized views (migrations 0036 & 0037)
-2. **Query Optimization**: Eliminating N+1 queries with proper prefetching via `AnnotationQueryOptimizer`
-3. **Progressive Loading**: Support for page-scoped queries and summaries
+1. **Database Optimization**: Strategic indexes and materialized views (migrations 0036-0039)
+2. **Query Optimization**: Eliminating N+1 queries with proper prefetching via `AnnotationQueryOptimizer` and `RelationshipQueryOptimizer`
+3. **Progressive Loading**: Support for page-scoped queries and summaries for both annotations and relationships
 4. **Smart Caching**: Using materialized views for aggregations with per-user caching
 
-**Achieved Performance**: Fast initial load for summaries, optimized page-scoped queries
+**Achieved Performance**: Fast initial load for summaries, optimized page-scoped queries for both annotations and relationships
 
 ### Important Trade-offs
 
@@ -29,15 +29,24 @@ For most use cases, the performance gain (30-60x) far outweighs the slight stale
 
 ### Current Database Indexes
 
-The annotation model has comprehensive indexing including:
+The annotation and relationship models have comprehensive indexing including:
+
+**Annotation Indexes (migration 0036):**
 - Basic field indexes (page, document, corpus, creator, etc.)
-- Composite indexes for common query patterns
-- Performance-optimized indexes added in migration 0036:
+- Composite indexes for common query patterns:
   - `idx_ann_doc_corpus_page_nonstruct` - Non-structural page queries
   - `idx_ann_doc_corpus_page_user` - User annotations (no analysis)
   - `idx_ann_doc_corpus_analysis_page` - Analysis-specific annotations
   - `idx_ann_doc_page_struct` - Structural annotations
   - `idx_relationship_corpus_doc_struct` - Relationship queries
+
+**Relationship Indexes (migration 0038):**
+- `idx_rel_doc_corpus_user` - User relationships (no analysis) queries
+- `idx_rel_doc_corpus_analysis` - Analysis-specific relationship queries
+- `idx_rel_doc_structural` - Structural relationships
+- `idx_rel_permissions` - Permission filtering (creator + public status)
+- `idx_rel_source_ann` - M2M source annotations table
+- `idx_rel_target_ann` - M2M target annotations table
 
 ---
 
@@ -59,11 +68,13 @@ The annotation model has comprehensive indexing including:
 
 #### 1.1 Create Performance Indexes
 
-**Implemented in:** `/opencontractserver/annotations/migrations/0036_add_performance_indexes.py`
+**Annotation Indexes:** `/opencontractserver/annotations/migrations/0036_add_performance_indexes.py`
+**Relationship Indexes:** `/opencontractserver/annotations/migrations/0038_add_relationship_performance_indexes.py`
 
 #### 1.2 Create Materialized Views for Aggregations
 
-**Implemented in:** `/opencontractserver/annotations/migrations/0037_add_materialized_views.py`
+**Annotation Materialized Views:** `/opencontractserver/annotations/migrations/0037_add_materialized_views.py`
+**Relationship Materialized View:** `/opencontractserver/annotations/migrations/0039_add_relationship_materialized_view.py`
 
 #### 1.3 Materialized View Management
 
@@ -108,9 +119,28 @@ def check_materialized_view_staleness():
 
 ### Phase 2: Query Optimization Layer
 
-#### 2.1 Query Optimizer
+#### 2.1 Query Optimizers
 
 **Implemented in:** `/opencontractserver/annotations/query_optimizer.py`
+
+The file contains two optimizer classes:
+
+1. **AnnotationQueryOptimizer**: Handles annotation queries with:
+   - Permission-aware filtering (document, corpus, and annotation-level)
+   - Page-scoped queries (single page or multiple pages)
+   - Structural/non-structural filtering
+   - Analysis-specific filtering
+   - Materialized view fallback for summaries
+   - Per-user caching with 5-minute TTL
+
+2. **RelationshipQueryOptimizer**: Handles relationship queries with:
+   - Permission-aware filtering (document, corpus, and relationship-level)
+   - Page-scoped filtering (filters relationships touching specific pages)
+   - Structural/non-structural filtering
+   - Analysis-specific filtering
+   - Materialized view fallback for summaries
+   - Per-user caching with 5-minute TTL
+   - Optimized prefetching to prevent N+1 queries
 
 ### Phase 3: GraphQL Integration
 
@@ -257,12 +287,25 @@ export function useAnnotationSummary({
 
 **Test Coverage:** The implementation includes comprehensive tests in `/opencontractserver/tests/performance_optimizations/`:
 
+**Annotation Tests:**
 - `test_data_parity_simple.py` - Validates data consistency between old and new approaches
 - `test_db_optimizations.py` - Tests database optimization effectiveness
 - `test_mv_fallback_and_cache.py` - Tests materialized view fallback mechanisms
 - `test_graphql_numqueries.py` - Validates query count optimizations
 - `test_cache_ttl_behavior.py` - Tests caching behavior
 - `test_permission_filtering.py` - Validates permission-aware filtering
+- `test_multi_page_annotations.py` - Tests multi-page annotation queries
+
+**Relationship Tests:**
+- `test_page_relationships.py` - Tests page-filtered relationships via GraphQL
+- `test_relationship_optimizer.py` - Comprehensive tests for RelationshipQueryOptimizer including:
+  - Permission filtering (user, superuser, anonymous)
+  - Page filtering (single, multiple, empty pages)
+  - Caching behavior and invalidation
+  - Materialized view fallback
+  - Structural vs non-structural filtering
+  - Analysis-specific filtering
+  - Cache key generation and uniqueness
 
 #### 5.2 Monitorin
 
@@ -305,12 +348,12 @@ with connection.cursor() as cursor:
 #### 6.1 Current Implementation Status
 
 ✅ **Completed:**
-- Database indexes (migration 0036)
-- Materialized views (migration 0037)
-- Query optimizer with permission filtering
+- Database indexes for annotations (migration 0036) and relationships (migration 0038)
+- Materialized views for annotations (migration 0037) and relationships (migration 0039)
+- Query optimizers with permission filtering (AnnotationQueryOptimizer and RelationshipQueryOptimizer)
 - Materialized view refresh tasks
-- GraphQL types and resolvers
-- Comprehensive test suite
+- GraphQL types and resolvers with page-scoped fields
+- Comprehensive test suite for both annotations and relationships
 
 ⚠️ **Partial Implementation:**
 - Frontend still uses monolithic query
@@ -351,12 +394,13 @@ with connection.cursor() as cursor:
 
 ### Implementation Benefits
 
-1. **Instant Statistics** - Summary loads from materialized view in <50ms
-2. **Optimized Queries** - Page-scoped queries use specialized indexes
-3. **Permission Safety** - All queries include proper permission checks
-4. **Smart Caching** - Per-user caching prevents permission leaks
-5. **Graceful Degradation** - Falls back to direct queries if MV unavailable
-6. **Backward Compatible** - Existing queries benefit from optimizations
+1. **Instant Statistics** - Annotation and relationship summaries load from materialized views in <50ms
+2. **Optimized Queries** - Page-scoped queries use specialized indexes for both annotations and relationships
+3. **Permission Safety** - All queries include proper permission checks at document, corpus, and object levels
+4. **Smart Caching** - Per-user caching prevents permission leaks with registry-based invalidation
+5. **Graceful Degradation** - Falls back to direct queries if materialized views unavailable
+6. **Backward Compatible** - Existing queries benefit from optimizations without code changes
+7. **Page-based Filtering** - Both annotations and relationships can be efficiently filtered by page numbers
 
 ---
 
@@ -396,19 +440,30 @@ with connection.cursor() as cursor:
 
 ## Conclusion
 
-The implemented optimizations successfully address the annotation performance issues through:
+The implemented optimizations successfully address both annotation and relationship performance issues through:
 
 ### What's Implemented
-1. **Database Layer**: Performance indexes and materialized views (migrations 0036, 0037)
-2. **Query Optimizer**: Permission-aware, cached queries with smart strategy selection
-3. **GraphQL Layer**: Annotation summary field exposing materialized view data
-4. **Caching**: Per-user caching with 5-minute TTL
-5. **Testing**: Comprehensive test suite validating performance and correctness
+1. **Database Layer**:
+   - Performance indexes for annotations (migration 0036) and relationships (migration 0038)
+   - Materialized views for annotations (migration 0037) and relationships (migration 0039)
+2. **Query Optimizers**:
+   - `AnnotationQueryOptimizer` - Permission-aware, cached queries with multi-page support
+   - `RelationshipQueryOptimizer` - Similar capabilities for relationships with page filtering
+3. **GraphQL Layer**:
+   - `annotationSummary` field exposing annotation materialized view data
+   - `pageAnnotations` field supporting multiple pages
+   - `pageRelationships` field for page-filtered relationships
+4. **Caching**:
+   - Per-user caching with 5-minute TTL
+   - Registry-based cache invalidation for explicit key removal
+5. **Testing**:
+   - Comprehensive test suite for annotations and relationships
+   - Tests validate performance, permissions, caching, and data consistency
 
 ### Next Steps for Full Progressive Loading
-1. **Frontend Migration**: Update components to use `annotationSummary` field
+1. **Frontend Migration**: Update components to use new optimized fields
 2. **Page-scoped Loading**: Implement visible page detection and filtering
 3. **Navigation Index**: Expose navigation data as separate GraphQL field
 4. **Jump-to-Annotation**: Add dedicated jump functionality
 
-The frontend can immediately benefit from the annotation summary, while progressive page loading can be implemented incrementally without breaking existing functionality.
+The frontend can immediately benefit from the annotation and relationship summaries, while progressive page loading can be implemented incrementally without breaking existing functionality. All optimizations maintain backward compatibility and respect per-user permissions.
