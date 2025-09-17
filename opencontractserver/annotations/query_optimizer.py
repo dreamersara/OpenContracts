@@ -267,6 +267,30 @@ class AnnotationQueryOptimizer:
         if use_cache:
             # Cache the queryset (Django will cache the SQL, not results)
             cache.set(cache_key, qs, cls.CACHE_TTL)
+            # Register cache key for explicit invalidation when pattern delete unsupported
+            try:
+                # Document-level registry
+                doc_registry_key = f"doc_annotations:keys:{document_id}"
+                doc_registry = cache.get(doc_registry_key) or []
+                if cache_key not in doc_registry:
+                    doc_registry.append(cache_key)
+                    cache.set(doc_registry_key, doc_registry, cls.CACHE_TTL * 6)
+
+                # Document+corpus-level registry
+                if corpus_id is not None:
+                    doc_corpus_registry_key = (
+                        f"doc_annotations:keys:{document_id}:{corpus_id}"
+                    )
+                    doc_corpus_registry = cache.get(doc_corpus_registry_key) or []
+                    if cache_key not in doc_corpus_registry:
+                        doc_corpus_registry.append(cache_key)
+                        cache.set(
+                            doc_corpus_registry_key,
+                            doc_corpus_registry,
+                            cls.CACHE_TTL * 6,
+                        )
+            except Exception:
+                pass
 
         return qs
 
@@ -562,11 +586,38 @@ class AnnotationQueryOptimizer:
             pattern = "doc_annotations:*"
             logger.info("Invalidating all annotation caches")
 
+        deleted_any = False
+
+        # Attempt explicit deletion using registries (works even if pattern deletion unsupported)
+        try:
+            if document_id and corpus_id:
+                doc_corpus_registry_key = (
+                    f"doc_annotations:keys:{document_id}:{corpus_id}"
+                )
+                keys = cache.get(doc_corpus_registry_key) or []
+                for k in keys:
+                    cache.delete(k)
+                    deleted_any = True
+                cache.delete(doc_corpus_registry_key)
+            elif document_id:
+                doc_registry_key = f"doc_annotations:keys:{document_id}"
+                keys = cache.get(doc_registry_key) or []
+                for k in keys:
+                    cache.delete(k)
+                    deleted_any = True
+                cache.delete(doc_registry_key)
+        except Exception:
+            pass
+
+        # Fallback to pattern deletion for broader cleanup
         try:
             cache.delete_pattern(pattern)
         except AttributeError:
-            # Cache backend doesn't support pattern deletion
-            logger.warning("Cache backend doesn't support pattern deletion")
+            if not deleted_any:
+                # Cache backend doesn't support pattern deletion and no registry keys found
+                logger.warning(
+                    "Cache backend doesn't support pattern deletion and no registry keys found"
+                )
 
 
 class RelationshipQueryOptimizer:
@@ -859,21 +910,16 @@ class RelationshipQueryOptimizer:
             "relationship_label", "creator", "corpus", "analysis", "analyzer"
         )
 
-        if not use_cache:
-            # Full prefetch for zero-query access to related data after evaluation
-            source_prefetch = Prefetch(
-                "source_annotations",
-                queryset=Annotation.objects.select_related(
-                    "annotation_label", "creator"
-                ),
-            )
-            target_prefetch = Prefetch(
-                "target_annotations",
-                queryset=Annotation.objects.select_related(
-                    "annotation_label", "creator"
-                ),
-            )
-            qs = qs.prefetch_related(source_prefetch, target_prefetch)
+        # Prefetch related annotations for GraphQL nested fields to avoid N+1 even when caching
+        source_prefetch = Prefetch(
+            "source_annotations",
+            queryset=Annotation.objects.select_related("annotation_label", "creator"),
+        )
+        target_prefetch = Prefetch(
+            "target_annotations",
+            queryset=Annotation.objects.select_related("annotation_label", "creator"),
+        )
+        qs = qs.prefetch_related(source_prefetch, target_prefetch)
 
         # Order by creation date for consistent results
         qs = qs.order_by("created")

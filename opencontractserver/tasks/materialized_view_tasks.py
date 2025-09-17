@@ -143,6 +143,88 @@ def refresh_annotation_navigation_mv(document_id=None, corpus_id=None):
 
 
 @shared_task
+def refresh_relationship_summary_mv(document_id=None, corpus_id=None):
+    """
+    Refresh the relationship summary materialized view.
+
+    Args:
+        document_id: Optional document ID to refresh caches for (full MV refresh still occurs)
+        corpus_id: Optional corpus ID to refresh caches for (full MV refresh still occurs)
+    """
+    try:
+        with connection.cursor() as cursor:
+            logger.info("Refreshing relationship_summary_mv")
+            cursor.execute(
+                "REFRESH MATERIALIZED VIEW CONCURRENTLY relationship_summary_mv"
+            )
+
+            fresh_summary = None
+            if document_id and corpus_id:
+                # Load the updated summary row to overwrite per-user caches
+                cursor.execute(
+                    """
+                    SELECT
+                        document_id,
+                        corpus_id,
+                        relationship_count,
+                        label_types,
+                        pages_with_relationships,
+                        last_refreshed
+                    FROM relationship_summary_mv
+                    WHERE document_id = %s AND corpus_id = %s
+                    """,
+                    [document_id, corpus_id],
+                )
+                row = cursor.fetchone()
+                if row:
+                    fresh_summary = {
+                        "document_id": row[0],
+                        "corpus_id": row[1],
+                        "relationship_count": row[2] or 0,
+                        "label_types": row[3] or 0,
+                        "pages_with_relationships": row[4] or [],
+                        "last_refreshed": row[5],
+                        "source": "materialized_view",
+                    }
+
+        # Overwrite per-user cached summaries for this (doc, corpus)
+        if document_id and corpus_id and fresh_summary:
+            registry_key = f"relationship_summary:users:{document_id}:{corpus_id}"
+            try:
+                registry = cache.get(registry_key) or []
+            except Exception:
+                registry = []
+
+            if registry:
+                for user_id in registry:
+                    user_cache_key = (
+                        f"relationship_summary:{document_id}:{corpus_id}:{user_id}"
+                    )
+                    cache.set(user_cache_key, fresh_summary, 300)
+
+            # Best-effort cleanup of any legacy keys
+            try:
+                cache.delete_pattern(
+                    f"relationship_summary:{document_id}:{corpus_id}:*"
+                )
+            except AttributeError:
+                logger.debug("Cache backend doesn't support pattern deletion")
+
+        # Full refresh path: broad cleanup
+        if not (document_id and corpus_id):
+            try:
+                cache.delete_pattern("relationship_summary:*")
+            except AttributeError:
+                logger.debug("Cache backend doesn't support pattern deletion")
+
+        logger.info("Successfully refreshed relationship_summary_mv")
+        return True
+    except Exception as e:
+        logger.error(f"Error refreshing relationship_summary_mv: {str(e)}")
+        raise
+
+
+@shared_task
 def refresh_all_materialized_views():
     """
     Refresh all materialized views in the correct order.
@@ -154,7 +236,11 @@ def refresh_all_materialized_views():
     errors = []
 
     # Refresh in dependency order
-    views_to_refresh = ["annotation_summary_mv", "annotation_navigation_mv"]
+    views_to_refresh = [
+        "annotation_summary_mv",
+        "annotation_navigation_mv",
+        "relationship_summary_mv",
+    ]
 
     for view_name in views_to_refresh:
         try:
@@ -172,6 +258,7 @@ def refresh_all_materialized_views():
     try:
         cache.delete_pattern("annotation_summary:*")
         cache.delete_pattern("annotation_nav:*")
+        cache.delete_pattern("relationship_summary:*")
     except AttributeError:
         # If cache backend doesn't support pattern deletion
         logger.warning("Cache backend doesn't support pattern deletion")
@@ -228,6 +315,38 @@ def check_materialized_view_staleness():
                     )
                     refresh_annotation_summary_mv.delay()
 
+            # Check relationship_summary_mv staleness
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) as total_rows,
+                    MIN(last_refreshed) as oldest_refresh,
+                    MAX(last_refreshed) as newest_refresh,
+                    EXTRACT(EPOCH FROM (NOW() - MIN(last_refreshed))) as max_staleness_seconds
+                FROM relationship_summary_mv
+            """
+            )
+
+            result_rel = cursor.fetchone()
+            if result_rel:
+                stats["relationship_summary_mv"] = {
+                    "total_rows": result_rel[0],
+                    "oldest_refresh": (
+                        result_rel[1].isoformat() if result_rel[1] else None
+                    ),
+                    "newest_refresh": (
+                        result_rel[2].isoformat() if result_rel[2] else None
+                    ),
+                    "max_staleness_seconds": result_rel[3],
+                }
+
+                # If any data is more than 5 minutes old, refresh
+                if result_rel[3] and result_rel[3] > 300:
+                    logger.info(
+                        f"relationship_summary_mv is stale ({result_rel[3]}s), triggering refresh"
+                    )
+                    refresh_relationship_summary_mv.delay()
+
             # Check if views exist and have data
             cursor.execute(
                 """
@@ -235,7 +354,7 @@ def check_materialized_view_staleness():
                     matviewname,
                     pg_size_pretty(pg_total_relation_size(matviewname::regclass)) as size
                 FROM pg_matviews
-                WHERE matviewname IN ('annotation_summary_mv', 'annotation_navigation_mv')
+                WHERE matviewname IN ('annotation_summary_mv', 'annotation_navigation_mv', 'relationship_summary_mv')
             """
             )
 

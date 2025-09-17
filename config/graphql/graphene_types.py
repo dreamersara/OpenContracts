@@ -876,6 +876,7 @@ class DocumentType(AnnotatePermissionsForReadMixin, DjangoObjectType):
         RelationshipType,
         corpus_id=graphene.ID(required=True),
         pages=graphene.List(graphene.Int, required=True),
+        structural=graphene.Boolean(),
         analysis_id=graphene.ID(),
         description="Get relationships where source or target annotations are on the specified page(s).",
     )
@@ -939,8 +940,13 @@ class DocumentType(AnnotatePermissionsForReadMixin, DjangoObjectType):
             use_cache=True,
         )
 
-    def resolve_page_relationships(self, info, corpus_id, pages, analysis_id=None):
+    def resolve_page_relationships(
+        self, info, corpus_id, pages, structural=None, analysis_id=None
+    ):
         """Resolve relationships for specific page(s) using the optimizer."""
+        from django.contrib.auth.models import AnonymousUser
+        from graphql import GraphQLError
+
         from opencontractserver.annotations.query_optimizer import (
             RelationshipQueryOptimizer,
         )
@@ -953,14 +959,71 @@ class DocumentType(AnnotatePermissionsForReadMixin, DjangoObjectType):
         # Get user from the GraphQL context
         user = info.context.user if hasattr(info.context, "user") else None
 
+        # Permission checks mirroring annotation resolvers
+        if not self.is_public:
+            if isinstance(user, AnonymousUser) or not user or not user.is_authenticated:
+                raise GraphQLError(
+                    "Permission denied: Authentication required to access private documents"
+                )
+            elif user != self.creator and not user.is_superuser:
+                from opencontractserver.types.enums import PermissionTypes
+                from opencontractserver.utils.permissioning import (
+                    user_has_permission_for_obj,
+                )
+
+                if not user_has_permission_for_obj(user, self, PermissionTypes.READ):
+                    raise GraphQLError(
+                        "Permission denied: You do not have access to this document"
+                    )
+
         return RelationshipQueryOptimizer.get_document_relationships(
             document_id=self.id,
             user=user,
             corpus_id=corpus_pk,
             pages=pages if pages else None,
+            structural=structural,
             analysis_id=analysis_pk,
             use_cache=True,
         )
+
+    relationship_summary = graphene.Field(
+        GenericScalar,
+        corpus_id=graphene.ID(required=True),
+        description="Get relationship summary statistics for this document and corpus (MV-backed).",
+    )
+
+    def resolve_relationship_summary(self, info, corpus_id):
+        from django.contrib.auth.models import AnonymousUser
+        from graphql import GraphQLError
+
+        from opencontractserver.annotations.query_optimizer import (
+            RelationshipQueryOptimizer,
+        )
+
+        # Permissions mirroring annotation summary style
+        user = info.context.user if hasattr(info.context, "user") else None
+
+        if not self.is_public:
+            if isinstance(user, AnonymousUser) or not user or not user.is_authenticated:
+                raise GraphQLError(
+                    "Permission denied: Authentication required to access private documents"
+                )
+            elif user != self.creator and not user.is_superuser:
+                from opencontractserver.types.enums import PermissionTypes
+                from opencontractserver.utils.permissioning import (
+                    user_has_permission_for_obj,
+                )
+
+                if not user_has_permission_for_obj(user, self, PermissionTypes.READ):
+                    raise GraphQLError(
+                        "Permission denied: You do not have access to this document"
+                    )
+
+        _, corpus_pk = from_global_id(corpus_id)
+        summary = RelationshipQueryOptimizer.get_relationship_summary(
+            document_id=self.id, corpus_id=corpus_pk, user=user
+        )
+        return summary
 
     class Meta:
         model = Document

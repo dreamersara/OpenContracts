@@ -1,6 +1,6 @@
 # OpenContracts Annotation & Relationship Performance Optimization Guide
 
-## Executive Summary
+## Summary
 
 The OpenContracts `GetDocumentKnowledgeAndAnnotations` query suffers from (not unexpected) performance issues (10-30+ seconds) due to loading ALL annotations and relationships for a corpus. This documents the **implemented optimizations**:
 
