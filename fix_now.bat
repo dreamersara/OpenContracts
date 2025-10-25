@@ -10,12 +10,18 @@ echo DJANGO_ALLOWED_HOSTS=localhost >> .env
 echo EMBEDDINGS_MICROSERVICE_URL=http://localhost:5002 >> .env
 echo DOCLING_PARSER_SERVICE_URL=http://localhost:5001 >> .env
 echo VECTOR_EMBEDDER_API_KEY=dummy >> .env
-echo CELERY_BROKER_URL=memory:// >> .env
+echo CELERY_BROKER_URL=redis://localhost:6379/0 >> .env
+echo CELERY_RESULT_BACKEND=redis://localhost:6379/0 >> .env
 echo REDIS_URL=redis://localhost:6379/0 >> .env
 echo USE_AWS=False >> .env
+echo STORAGE_BACKEND=LOCAL >> .env
 echo EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend >> .env
+echo DJANGO_EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend >> .env
 echo ANTHROPIC_API_KEY= >> .env
 echo OPENAI_API_KEY= >> .env
+echo AWS_ACCESS_KEY_ID=dummy >> .env
+echo AWS_SECRET_ACCESS_KEY=dummy >> .env
+echo AWS_STORAGE_BUCKET_NAME=dummy >> .env
 
 echo .env file created!
 echo Starting Django...
